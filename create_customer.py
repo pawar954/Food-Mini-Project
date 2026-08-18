@@ -20,33 +20,3 @@ def add_customer(name, phone, email):
 
     return customer_id
 # ====================================================================================================
-
-
-# GET CUSTOMER
-
-
-def get_customer(customer_id):
-
-    connection = get_connection()
-
-    try:
-
-        cursor = connection.cursor()
-
-        cursor.execute("""
-            SELECT
-                customer_id,
-                customer_name,
-                email
-
-            FROM customers
-
-            WHERE customer_id = ?
-        """, (customer_id,))
-
-        return cursor.fetchone()
-
-    finally:
-
-        connection.close()
-

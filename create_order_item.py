@@ -29,7 +29,6 @@ def add_order_item(order_id, product_id, quantity):
         # ----------------------------------------------------
         # 2. Get Product Price
         # ----------------------------------------------------
-
         cursor.execute("""
             SELECT price
 
@@ -144,35 +143,35 @@ def add_order_item(order_id, product_id, quantity):
         connection.close()
 
 
-# ============================================================
-# ADD ORDER ITEM BY PRODUCT NAME
-# ============================================================
+# # ============================================================
+# # ADD ORDER ITEM BY PRODUCT NAME
+# # ============================================================
 
-def add_order_item_by_name(
-    order_id,
-    product_name,
-    quantity
-):
+# def add_order_item_by_name(
+#     order_id,
+#     product_name,
+#     quantity
+# ):
 
-    # --------------------------------------------------------
-    # Get Product ID
-    # --------------------------------------------------------
+#     # --------------------------------------------------------
+#     # Get Product ID
+#     # --------------------------------------------------------
 
-    product_id = get_product_id(
-        product_name
-    )
+#     product_id = get_product_id(
+#         product_name
+#     )
 
-    if product_id is None:
+#     if product_id is None:
 
-        return False
+#         return False
 
-    # --------------------------------------------------------
-    # Call Actual Order Item Function
-    # --------------------------------------------------------
+#     # --------------------------------------------------------
+#     # Call Actual Order Item Function
+#     # --------------------------------------------------------
 
-    return add_order_item(
-        order_id,
-        product_id,
-        quantity
-    )
+#     return add_order_item(
+#         order_id,
+#         product_id,
+#         quantity
+#     )
 

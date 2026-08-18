@@ -1,30 +1,39 @@
 import sqlite3
 
 from database import get_connection
-from create_product import get_product_id
+from create_product import  get_product_id
+# ============================================================
+# Add inventory
+# ============================================================
 
+def add_inventory(product_id, quantity):
 
+    if quantity < 0:
+        print("Inventory quantity cannot be negative.")
+        return False
 
-def add_inventory(product_id,quantity):
     connection = get_connection()
 
     try:
+
         cursor = connection.cursor()
+
         cursor.execute("""
             INSERT INTO inventory (product_id, quantity)
             VALUES (?, ?)
         """, (product_id, quantity))
 
         connection.commit()
-        return product_id
 
-    except Exception as e:
+        return True
+
+    except sqlite3.IntegrityError as e:
 
         connection.rollback()
 
         print(f"Inventory creation failed: {e}")
 
-        return None
+        return False
 
     finally:
 
@@ -32,7 +41,11 @@ def add_inventory(product_id,quantity):
 
 
 
-# ==========================================================================================
+
+
+
+
+
 
 # ADD INVENTORY BY PRODUCT NAME
 
