@@ -1,7 +1,9 @@
+# inventory :
 import sqlite3
 
 from database import get_connection
-from create_product import  get_product_id
+
+
 # ============================================================
 # Add inventory
 # ============================================================
@@ -40,33 +42,9 @@ def add_inventory(product_id, quantity):
         connection.close()
 
 
-
-
-
-
-
-
-
-# ADD INVENTORY BY PRODUCT NAME
-
-
-def add_inventory_by_name(product_name, quantity):
-
-    product_id = get_product_id(product_name)
-
-    if product_id is None:
-
-        return False
-
-    return add_inventory(
-        product_id,
-        quantity
-    )
-
-
 # ============================================================
-# CHECK INVENTORY
-
+# Check inventory
+# ============================================================
 
 def check_inventory(product_id):
 
@@ -78,16 +56,13 @@ def check_inventory(product_id):
 
         cursor.execute("""
             SELECT quantity
-
             FROM inventory
-
             WHERE product_id = ?
         """, (product_id,))
 
         result = cursor.fetchone()
 
         if result is None:
-
             return 0
 
         return result[0]
@@ -98,15 +73,13 @@ def check_inventory(product_id):
 
 
 # ============================================================
-# UPDATE INVENTORY
-
+# Update inventory
+# ============================================================
 
 def update_inventory(product_id, quantity):
 
     if quantity < 0:
-
         print("Inventory quantity cannot be negative.")
-
         return False
 
     connection = get_connection()
@@ -117,14 +90,9 @@ def update_inventory(product_id, quantity):
 
         cursor.execute("""
             UPDATE inventory
-
             SET quantity = ?
-
             WHERE product_id = ?
-        """, (
-            quantity,
-            product_id
-        ))
+        """, (quantity, product_id))
 
         connection.commit()
 
@@ -142,21 +110,65 @@ def update_inventory(product_id, quantity):
 
         connection.close()
 
-
 # ============================================================
-# UPDATE INVENTORY BY PRODUCT NAME
+# Delete inventory
+# ============================================================
 
+def delete_inventory(product_id):
 
-def update_inventory_by_name(product_name, quantity):
+    connection = get_connection()
 
-    product_id = get_product_id(product_name)
+    try:
 
-    if product_id is None:
+        cursor = connection.cursor()
+
+        cursor.execute("""
+            DELETE FROM inventory
+            WHERE product_id = ?
+        """, (product_id,))
+
+        connection.commit()
+
+        return cursor.rowcount > 0
+
+    except sqlite3.Error as e:
+
+        connection.rollback()
+
+        print(f"Inventory deletion failed: {e}")
 
         return False
 
-    return update_inventory(
-        product_id,
-        quantity
-    )
+    finally:
 
+        connection.close()
+# ============================================================
+# Show inventory
+# ============================================================
+
+def show_inventory():
+
+    connection = get_connection()
+
+    try:
+
+        cursor = connection.cursor()
+
+        cursor.execute("""
+            SELECT
+                p.product_id,
+                p.product_name,
+                i.quantity
+            FROM products p
+            JOIN inventory i
+                ON p.product_id = i.product_id
+            ORDER BY p.product_id
+        """)
+
+        inventory = cursor.fetchall()
+
+        return inventory
+
+    finally:
+
+        connection.close()
