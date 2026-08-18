@@ -1,38 +1,3 @@
-from database import get_connection
-
-
-def add_order_items(order_id, product_id, quantity, unit_price):
-
-    connection = get_connection()
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute("""
-            INSERT INTO order_items
-            (order_id, product_id, quantity, unit_price)
-            VALUES (?, ?, ?, ?)
-        """, (order_id, product_id, quantity, unit_price))
-
-        connection.commit()
-
-        order_item_id = cursor.lastrowid
-
-        return order_item_id
-
-    except Exception as e:
-
-        connection.rollback()
-
-        print(f"Order item creation failed: {e}")
-
-        return None
-
-    finally:
-
-        connection.close()
-# ==============================================================================================
-
 import sqlite3
 
 from database import get_connection
