@@ -172,3 +172,64 @@ def show_inventory():
     finally:
 
         connection.close()
+
+
+
+# ============================================================
+# SEARCH INVENTORY
+# ============================================================
+
+def search_inventory(product_id=None, product_name=None):
+
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        # ----------------------------------------------------
+        # Search by Product ID
+        # ----------------------------------------------------
+
+        if product_id is not None:
+
+            cursor.execute("""
+                SELECT
+                    i.product_id,
+                    p.product_name,
+                    i.quantity
+                FROM inventory i
+                JOIN products p
+                    ON i.product_id = p.product_id
+                WHERE i.product_id = ?
+            """, (int(product_id),))
+
+        # ----------------------------------------------------
+        # Search by Product Name
+        # ----------------------------------------------------
+
+        elif product_name and product_name.strip():
+
+            cursor.execute("""
+                SELECT
+                    i.product_id,
+                    p.product_name,
+                    i.quantity
+                FROM inventory i
+                JOIN products p
+                    ON i.product_id = p.product_id
+                WHERE LOWER(p.product_name) = LOWER(?)
+            """, (product_name.strip(),))
+
+        else:
+
+            return []
+
+        return cursor.fetchall()
+
+    except sqlite3.Error:
+
+        return []
+
+    finally:
+
+        connection.close()

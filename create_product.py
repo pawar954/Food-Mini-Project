@@ -6,39 +6,90 @@ from database import get_connection
 # ============================================================
 # Add Product
 # ============================================================
-
 def add_product(product_name, price):
+    
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        # Case-insensitive duplicate check
+        cursor.execute("""
+            SELECT product_id
+            FROM products
+            WHERE LOWER(product_name) = LOWER(?)
+        """, (product_name.strip(),))
+
+        existing = cursor.fetchone()
+
+        if existing:
+            return None
+
+        cursor.execute("""
+            INSERT INTO products
+            (product_name, price)
+            VALUES (?, ?)
+        """, (
+            product_name.strip(),
+            price
+        ))
+
+        connection.commit()
+
+        return cursor.lastrowid
+
+    except sqlite3.Error:
+        connection.rollback()
+        return None
+
+    finally:
+        connection.close()
+
+# ============================================================
+# SEARCH PRODUCT
+# ============================================================
+
+def search_product(product_id=None, product_name=None):
 
     connection = get_connection()
 
     try:
-
         cursor = connection.cursor()
 
-        cursor.execute("""
-            INSERT INTO products (product_name, price)
-            VALUES (?, ?)
-        """, (product_name, price))
+        # Search by Product ID
+        if product_id is not None:
 
-        connection.commit()
+            cursor.execute("""
+                SELECT
+                    product_id,
+                    product_name,
+                    price
+                FROM products
+                WHERE product_id = ?
+            """, (int(product_id),))
 
-        product_id = cursor.lastrowid
+        # Search by Product Name
+        elif product_name and product_name.strip():
 
-        return product_id
+            cursor.execute("""
+                SELECT
+                    product_id,
+                    product_name,
+                    price
+                FROM products
+                WHERE LOWER(product_name) = LOWER(?)
+            """, (product_name.strip(),))
 
-    except sqlite3.IntegrityError as e:
+        else:
+            return []
 
-        connection.rollback()
+        return cursor.fetchall()
 
-        print(f"Product creation failed: {e}")
-
-        return None
+    except sqlite3.Error:
+        return []
 
     finally:
-
         connection.close()
-
-
 # ============================================================
 # Show All Products
 # ============================================================

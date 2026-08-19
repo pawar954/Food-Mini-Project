@@ -250,3 +250,233 @@
 
 
 # ===============================================================================
+from database import get_connection
+from datetime import datetime
+
+
+# ============================================================
+# DATABASE CONNECTION
+# ============================================================
+
+connection = get_connection()
+cursor = connection.cursor()
+
+
+try:
+
+    # ========================================================
+    # CHECK CUSTOMERS
+    # ========================================================
+
+    customers = cursor.execute("""
+        SELECT customer_id, name
+        FROM customers
+        ORDER BY customer_id
+    """).fetchall()
+
+    print("\nCUSTOMERS:")
+    for customer in customers:
+        print(customer)
+
+    print("\nTotal Customers:", len(customers))
+
+
+    # ========================================================
+    # CHECK PRODUCTS
+    # ========================================================
+
+    products = cursor.execute("""
+        SELECT product_id, product_name, price
+        FROM products
+        ORDER BY product_id
+    """).fetchall()
+
+    print("\nPRODUCTS:")
+    for product in products:
+        print(product)
+
+    print("\nTotal Products:", len(products))
+
+
+    # ========================================================
+    # ADD 10 ORDERS
+    # ========================================================
+
+    orders = [
+        (1, 548.0),
+        (2, 328.0),
+        (3, 387.0),
+        (4, 358.0),
+        (5, 269.0),
+        (6, 398.0),
+        (7, 508.0),
+        (8, 240.0),
+        (9, 179.0),
+        (10, 250.0)
+    ]
+
+
+    created_order_ids = []
+
+
+    for customer_id, total_amount in orders:
+
+        now = datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+        cursor.execute("""
+            INSERT INTO orders
+            (
+                customer_id,
+                created_at,
+                updated_at,
+                status,
+                total_amount
+            )
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            customer_id,
+            now,
+            now,
+            "PENDING",
+            float(total_amount)
+        ))
+
+        created_order_ids.append(
+            cursor.lastrowid
+        )
+
+
+    # ========================================================
+    # ADD ORDER ITEMS
+    # ========================================================
+
+    order_items = [
+
+        # Order 1
+        (created_order_ids[0], 1, 2, 199.0),
+        (created_order_ids[0], 2, 1, 150.0),
+
+        # Order 2
+        (created_order_ids[1], 3, 2, 99.0),
+        (created_order_ids[1], 5, 1, 30.0),
+
+        # Order 3
+        (created_order_ids[2], 4, 1, 89.0),
+        (created_order_ids[2], 7, 1, 179.0),
+        (created_order_ids[2], 5, 1, 30.0),
+
+        # Order 4
+        (created_order_ids[3], 6, 2, 50.0),
+        (created_order_ids[3], 8, 1, 120.0),
+        (created_order_ids[3], 5, 1, 30.0),
+
+        # Order 5
+        (created_order_ids[4], 9, 1, 80.0),
+        (created_order_ids[4], 10, 1, 110.0),
+        (created_order_ids[4], 5, 1, 30.0),
+
+        # Order 6
+        (created_order_ids[5], 1, 2, 199.0),
+
+        # Order 7
+        (created_order_ids[6], 2, 1, 150.0),
+        (created_order_ids[6], 7, 2, 179.0),
+
+        # Order 8
+        (created_order_ids[7], 8, 2, 120.0),
+
+        # Order 9
+        (created_order_ids[8], 3, 1, 99.0),
+        (created_order_ids[8], 6, 1, 50.0),
+        (created_order_ids[8], 5, 1, 30.0),
+
+        # Order 10
+        (created_order_ids[9], 10, 1, 110.0),
+        (created_order_ids[9], 9, 1, 80.0),
+        (created_order_ids[9], 5, 2, 30.0)
+    ]
+
+
+    cursor.executemany("""
+        INSERT INTO order_items
+        (
+            order_id,
+            product_id,
+            quantity,
+            unit_price
+        )
+        VALUES (?, ?, ?, ?)
+    """, order_items)
+
+
+    # ========================================================
+    # SAVE DATA
+    # ========================================================
+
+    connection.commit()
+
+    print("\n========================================")
+    print("✅ 10 ORDERS ADDED SUCCESSFULLY")
+    print("========================================")
+
+
+    # ========================================================
+    # CHECK ORDERS
+    # ========================================================
+
+    print("\nORDERS:")
+
+    saved_orders = cursor.execute("""
+        SELECT
+            order_id,
+            customer_id,
+            status,
+            total_amount
+        FROM orders
+        ORDER BY order_id
+    """).fetchall()
+
+    for order in saved_orders:
+        print(order)
+
+    print("\nTotal Orders:", len(saved_orders))
+
+
+    # ========================================================
+    # CHECK ORDER ITEMS
+    # ========================================================
+
+    print("\nORDER ITEMS:")
+
+    saved_items = cursor.execute("""
+        SELECT
+            order_item_id,
+            order_id,
+            product_id,
+            quantity,
+            unit_price
+        FROM order_items
+        ORDER BY order_item_id
+    """).fetchall()
+
+    for item in saved_items:
+        print(item)
+
+    print("\nTotal Order Items:", len(saved_items))
+
+
+except Exception as e:
+
+    connection.rollback()
+
+    print("\n❌ ERROR:")
+    print(e)
+
+
+finally:
+
+    connection.close()
+
+    print("\nDatabase connection closed.")

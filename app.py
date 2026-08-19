@@ -2,25 +2,43 @@ import sqlite3
 import gradio as gr
 
 from database import get_connection
+from create_tables import create_tables
 
-from login import (
-    check_admin_login,
-    check_customer_login
+from login import check_customer_login
+
+from admin_auth import (
+    validate_admin,
+    create_admin,
+    show_admins
+)
+
+from admin_activity import (
+    log_activity,
+    show_activity
 )
 
 from create_product import (
     add_product,
     update_product,
     show_products,
-    delete_product
+    delete_product,
+    search_product
 )
 
 from create_inventory import (
     add_inventory,
     update_inventory,
     show_inventory,
-    delete_inventory
+    delete_inventory,
+    search_inventory
 )
+
+
+# ============================================================
+# INITIAL DATABASE SETUP
+# ============================================================
+
+create_tables()
 
 
 # ============================================================
@@ -52,11 +70,7 @@ def get_product_details(product_name):
 
         if name == product_name:
 
-            return (
-                product_id,
-                name,
-                price
-            )
+            return product_id, name, price
 
     return None, "", None
 
@@ -106,17 +120,10 @@ def get_inventory_product_details(product_name):
 
         if name == product_name:
 
-            return (
-                product_id,
-                name
-            )
+            return product_id, name
 
     return None, ""
 
-
-# ============================================================
-# INVENTORY QUANTITY
-# ============================================================
 
 def get_inventory_quantity(product_name):
 
@@ -127,70 +134,43 @@ def get_inventory_quantity(product_name):
 
     for item in inventory:
 
-        product_id = item[0]
-        name = item[1]
-        quantity = item[2]
-
-        if name == product_name:
-            return quantity
+        if item[1] == product_name:
+            return item[2]
 
     return None
 
 
 # ============================================================
-# REFRESH PRODUCT DROPDOWNS
+# DROPDOWN REFRESH
 # ============================================================
 
 def refresh_product_dropdowns():
 
-    product_names = get_product_names()
+    choices = get_product_names()
 
     return (
-        gr.update(
-            choices=product_names,
-            value=None
-        ),
-
-        gr.update(
-            choices=product_names,
-            value=None
-        )
+        gr.update(choices=choices, value=None),
+        gr.update(choices=choices, value=None)
     )
 
-
-# ============================================================
-# REFRESH INVENTORY DROPDOWNS
-# ============================================================
 
 def refresh_inventory_dropdowns():
 
     add_choices = get_products_not_in_inventory()
-
     inventory_choices = get_inventory_product_names()
 
     return (
-        gr.update(
-            choices=add_choices,
-            value=None
-        ),
-
-        gr.update(
-            choices=inventory_choices,
-            value=None
-        ),
-
-        gr.update(
-            choices=inventory_choices,
-            value=None
-        )
+        gr.update(choices=add_choices, value=None),
+        gr.update(choices=inventory_choices, value=None),
+        gr.update(choices=inventory_choices, value=None)
     )
 
 
 # ============================================================
-# PRODUCT FUNCTIONS
+# PRODUCT - ADD
 # ============================================================
 
-def add_product_admin(product_name, price):
+def add_product_admin(admin_id, product_name, price):
 
     if not product_name or not product_name.strip():
 
@@ -217,7 +197,7 @@ def add_product_admin(product_name, price):
 
     product_id = add_product(
         product_name,
-        price
+        float(price)
     )
 
     if product_id is None:
@@ -225,6 +205,14 @@ def add_product_admin(product_name, price):
         return (
             "❌ Product already exists or could not be added.",
             show_products()
+        )
+
+    if admin_id is not None:
+
+        log_activity(
+            admin_id,
+            "ADD_PRODUCT",
+            f"Added product '{product_name}' with price {price}"
         )
 
     return (
@@ -235,10 +223,11 @@ def add_product_admin(product_name, price):
 
 
 # ============================================================
-# UPDATE PRODUCT
+# PRODUCT - UPDATE
 # ============================================================
 
 def update_product_admin(
+    admin_id,
     selected_product,
     new_product_name,
     new_price
@@ -283,13 +272,24 @@ def update_product_admin(
             show_products()
         )
 
+    new_product_name = new_product_name.strip()
+
     result = update_product(
         product_id,
-        new_product_name.strip(),
-        new_price
+        new_product_name,
+        float(new_price)
     )
 
     if result:
+
+        if admin_id is not None:
+
+            log_activity(
+                admin_id,
+                "UPDATE_PRODUCT",
+                f"Updated product '{old_name}' to "
+                f"'{new_product_name}', price {old_price} to {new_price}"
+            )
 
         return (
             f"✅ Product '{old_name}' updated successfully. "
@@ -298,17 +298,16 @@ def update_product_admin(
         )
 
     return (
-        "❌ Product update failed. "
-        "Product name may already exist.",
+        "❌ Product update failed. Product name may already exist.",
         show_products()
     )
 
 
 # ============================================================
-# DELETE PRODUCT
+# PRODUCT - DELETE
 # ============================================================
 
-def delete_product_admin(selected_product):
+def delete_product_admin(admin_id, selected_product):
 
     if not selected_product:
 
@@ -332,24 +331,67 @@ def delete_product_admin(selected_product):
 
     if result:
 
+        if admin_id is not None:
+
+            log_activity(
+                admin_id,
+                "DELETE_PRODUCT",
+                f"Deleted product '{product_name}' "
+                f"(Product ID: {product_id})"
+            )
+
         return (
-            f"✅ Product '{product_name}' deleted successfully. "
-            f"Product ID: {product_id}",
+            f"✅ Product '{product_name}' deleted successfully.",
             show_products()
         )
 
     return (
-        "❌ Product could not be deleted. "
-        "It may be used by inventory or orders.",
+        "❌ Product could not be deleted.",
         show_products()
     )
 
 
 # ============================================================
-# INVENTORY FUNCTIONS
+# PRODUCT SEARCH
+# ============================================================
+
+def search_product_admin(search_type, search_value):
+
+    if search_type == "All Products":
+
+        return show_products()
+
+    if not search_value or not str(search_value).strip():
+
+        return []
+
+    try:
+
+        if search_type == "Product ID":
+
+            return search_product(
+                product_id=int(float(search_value))
+            )
+
+        if search_type == "Product Name":
+
+            return search_product(
+                product_name=str(search_value).strip()
+            )
+
+    except (ValueError, TypeError):
+
+        return []
+
+    return []
+
+
+# ============================================================
+# INVENTORY - ADD
 # ============================================================
 
 def add_inventory_admin(
+    admin_id,
     selected_product,
     quantity
 ):
@@ -393,6 +435,15 @@ def add_inventory_admin(
 
     if result:
 
+        if admin_id is not None:
+
+            log_activity(
+                admin_id,
+                "ADD_INVENTORY",
+                f"Added inventory for '{product_name}', "
+                f"quantity {int(quantity)}"
+            )
+
         return (
             f"✅ Inventory added for '{product_name}'. "
             f"Product ID: {product_id}",
@@ -407,10 +458,11 @@ def add_inventory_admin(
 
 
 # ============================================================
-# UPDATE INVENTORY
+# INVENTORY - UPDATE
 # ============================================================
 
 def update_inventory_admin(
+    admin_id,
     selected_product,
     quantity
 ):
@@ -443,9 +495,13 @@ def update_inventory_admin(
     if product_id is None:
 
         return (
-            "❌ Product is not currently present in inventory.",
+            "❌ Product is not currently in inventory.",
             show_inventory()
         )
+
+    old_quantity = get_inventory_quantity(
+        selected_product
+    )
 
     result = update_inventory(
         product_id,
@@ -454,9 +510,17 @@ def update_inventory_admin(
 
     if result:
 
+        if admin_id is not None:
+
+            log_activity(
+                admin_id,
+                "UPDATE_INVENTORY",
+                f"Updated inventory for '{product_name}' "
+                f"from {old_quantity} to {int(quantity)}"
+            )
+
         return (
-            f"✅ Inventory for '{product_name}' updated successfully. "
-            f"Product ID: {product_id}",
+            f"✅ Inventory for '{product_name}' updated successfully.",
             show_inventory()
         )
 
@@ -467,10 +531,13 @@ def update_inventory_admin(
 
 
 # ============================================================
-# DELETE INVENTORY
+# INVENTORY - DELETE
 # ============================================================
 
-def delete_inventory_admin(selected_product):
+def delete_inventory_admin(
+    admin_id,
+    selected_product
+):
 
     if not selected_product:
 
@@ -486,7 +553,7 @@ def delete_inventory_admin(selected_product):
     if product_id is None:
 
         return (
-            "❌ Product is not currently present in inventory.",
+            "❌ Product is not currently in inventory.",
             show_inventory()
         )
 
@@ -494,9 +561,17 @@ def delete_inventory_admin(selected_product):
 
     if result:
 
+        if admin_id is not None:
+
+            log_activity(
+                admin_id,
+                "DELETE_INVENTORY",
+                f"Deleted inventory for '{product_name}' "
+                f"(Product ID: {product_id})"
+            )
+
         return (
-            f"✅ Inventory for '{product_name}' deleted successfully. "
-            f"Product ID: {product_id}",
+            f"✅ Inventory for '{product_name}' deleted successfully.",
             show_inventory()
         )
 
@@ -504,6 +579,41 @@ def delete_inventory_admin(selected_product):
         "❌ Inventory could not be deleted.",
         show_inventory()
     )
+
+
+# ============================================================
+# INVENTORY SEARCH
+# ============================================================
+
+def search_inventory_admin(search_type, search_value):
+
+    if search_type == "All Inventory":
+
+        return show_inventory()
+
+    if not search_value or not str(search_value).strip():
+
+        return []
+
+    try:
+
+        if search_type == "Product ID":
+
+            return search_inventory(
+                product_id=int(float(search_value))
+            )
+
+        if search_type == "Product Name":
+
+            return search_inventory(
+                product_name=str(search_value).strip()
+            )
+
+    except (ValueError, TypeError):
+
+        return []
+
+    return []
 
 
 # ============================================================
@@ -522,7 +632,7 @@ def show_orders():
             SELECT
                 o.order_id,
                 c.name,
-                o.order_date,
+                o.created_at,
                 o.status,
                 o.total_amount
             FROM orders o
@@ -531,9 +641,7 @@ def show_orders():
             ORDER BY o.order_id DESC
         """)
 
-        orders = cursor.fetchall()
-
-        return orders
+        return cursor.fetchall()
 
     except sqlite3.Error:
 
@@ -544,11 +652,168 @@ def show_orders():
         connection.close()
 
 
+def view_orders_admin(admin_id):
+
+    orders = show_orders()
+
+    if admin_id is not None:
+
+        log_activity(
+            admin_id,
+            "VIEW_ORDERS",
+            "Admin viewed customer orders"
+        )
+
+    return orders
+
+
+# ============================================================
+# ADMIN ACTIVITY
+# ============================================================
+
+def get_admin_activity():
+
+    try:
+
+        return show_activity()
+
+    except sqlite3.Error:
+
+        return []
+
+
+# ============================================================
+# ADMIN MANAGEMENT - ADD
+# ============================================================
+
+def add_admin_admin(
+    current_admin_id,
+    full_name,
+    username,
+    password
+):
+
+    if not full_name or not full_name.strip():
+
+        return (
+            "❌ Full name is required.",
+            show_admins()
+        )
+
+    if not username or not username.strip():
+
+        return (
+            "❌ Username is required.",
+            show_admins()
+        )
+
+    if not password:
+
+        return (
+            "❌ Password is required.",
+            show_admins()
+        )
+
+    full_name = full_name.strip()
+    username = username.strip()
+
+    admin_id = create_admin(
+        username,
+        password,
+        full_name
+    )
+
+    if admin_id is None:
+
+        return (
+            "❌ Username already exists or admin could not be created.",
+            show_admins()
+        )
+
+    if current_admin_id is not None:
+
+        log_activity(
+            current_admin_id,
+            "ADD_ADMIN",
+            f"Added admin '{username}' ({full_name})"
+        )
+
+    return (
+        f"✅ Admin '{full_name}' added successfully. "
+        f"Admin ID: {admin_id}",
+        show_admins()
+    )
+
+
+# ============================================================
+# ADMIN LOGIN
+# ============================================================
+
+def process_admin_login(
+    username,
+    password
+):
+
+    if not username or not username.strip():
+
+        return (
+            "❌ Username is required.",
+            gr.update(visible=True),
+            gr.update(visible=False),
+            None,
+            ""
+        )
+
+    if not password:
+
+        return (
+            "❌ Password is required.",
+            gr.update(visible=True),
+            gr.update(visible=False),
+            None,
+            ""
+        )
+
+    username = username.strip()
+
+    admin = validate_admin(
+        username,
+        password
+    )
+
+    if admin is None:
+
+        return (
+            "❌ Invalid username or password.",
+            gr.update(visible=True),
+            gr.update(visible=False),
+            None,
+            ""
+        )
+
+    admin_id = admin[0]
+    full_name = admin[2]
+
+    log_activity(
+        admin_id,
+        "LOGIN",
+        "Admin logged in"
+    )
+
+    return (
+        f"✅ Welcome {full_name}",
+        gr.update(visible=False),
+        gr.update(visible=True),
+        admin_id,
+        full_name
+    )
+
+
 # ============================================================
 # ADMIN DASHBOARD
 # ============================================================
 
-def create_admin_dashboard():
+def create_admin_dashboard(admin_id_state):
 
     with gr.Column(
         visible=False,
@@ -559,13 +824,31 @@ def create_admin_dashboard():
         # HEADER
         # ====================================================
 
-        gr.Markdown("# 🍴 Food Management System")
+        with gr.Row():
 
-        gr.Markdown("## Admin Dashboard")
+            with gr.Column(scale=8):
 
-        gr.Markdown(
-            "Welcome, Administrator 👋"
-        )
+                gr.Markdown(
+                    "# 🍴 Food Management System"
+                )
+
+                gr.Markdown(
+                    "## Admin Dashboard"
+                )
+
+                admin_welcome = gr.Markdown(
+                    "Welcome, Administrator 👋"
+                )
+
+            with gr.Column(
+                scale=1,
+                min_width=120
+            ):
+
+                logout_button = gr.Button(
+                    "🚪 Logout",
+                    variant="stop"
+                )
 
 
         # ====================================================
@@ -581,19 +864,31 @@ def create_admin_dashboard():
             )
 
             product_menu_button = gr.Button(
-                "📦  Manage Products",
+                "📦 Manage Products",
                 variant="primary",
                 size="lg"
             )
 
             inventory_menu_button = gr.Button(
-                "📊  Manage Inventory",
+                "📊 Manage Inventory",
                 variant="primary",
                 size="lg"
             )
 
             orders_menu_button = gr.Button(
-                "📋  View Orders",
+                "📋 View Orders",
+                variant="secondary",
+                size="lg"
+            )
+
+            admin_management_button = gr.Button(
+                "👨‍💼 Admin Management",
+                variant="secondary",
+                size="lg"
+            )
+
+            activity_menu_button = gr.Button(
+                "📝 Admin Activity Log",
                 variant="secondary",
                 size="lg"
             )
@@ -603,9 +898,16 @@ def create_admin_dashboard():
         # PRODUCT PAGE
         # ====================================================
 
-        with gr.Column(
-            visible=False
-        ) as product_page:
+        with gr.Column(visible=False) as product_page:
+
+            with gr.Row():
+
+                back_product_button = gr.Button(
+                    "←",
+                    variant="secondary",
+                    scale=0,
+                    min_width=50
+                )
 
             gr.Markdown("# 📦 Manage Products")
 
@@ -613,130 +915,179 @@ def create_admin_dashboard():
                 "Add, view, update and delete products."
             )
 
-            back_product_button = gr.Button(
-                "← Back to Dashboard",
-                variant="secondary"
-            )
+            gr.Markdown("## Select Product Operation")
 
-
-            # =================================================
-            # ADD PRODUCT
-            # =================================================
-
-            gr.Markdown("## ➕ Add Product")
-
-            with gr.Row():
-
-                product_name_input = gr.Textbox(
-                    label="Product Name",
-                    placeholder="Enter product name"
-                )
-
-                product_price_input = gr.Number(
-                    label="Price",
-                    minimum=0
-                )
-
-            add_product_button = gr.Button(
+            product_add_option = gr.Button(
                 "➕ Add Product",
                 variant="primary"
             )
 
-            add_product_status = gr.Textbox(
-                label="Status",
-                interactive=False
-            )
-
-
-            # =================================================
-            # PRODUCT LIST
-            # =================================================
-
-            gr.Markdown("## 📋 All Products")
-
-            product_table = gr.Dataframe(
-                headers=[
-                    "Product ID",
-                    "Product Name",
-                    "Price"
-                ],
-                value=show_products(),
-                interactive=False
-            )
-
-            refresh_products_button = gr.Button(
-                "🔄 Refresh Products",
+            product_view_option = gr.Button(
+                "📋 View Products",
                 variant="secondary"
             )
 
-
-            # =================================================
-            # UPDATE PRODUCT
-            # =================================================
-
-            gr.Markdown("## ✏️ Update Product")
-
-            update_product_select = gr.Dropdown(
-                choices=get_product_names(),
-                label="Select Product",
-                value=None,
-                interactive=True
-            )
-
-            with gr.Row():
-
-                update_product_name = gr.Textbox(
-                    label="New Product Name",
-                    placeholder="Enter new product name"
-                )
-
-                update_product_price = gr.Number(
-                    label="New Price",
-                    minimum=0
-                )
-
-            update_product_button = gr.Button(
+            product_update_option = gr.Button(
                 "✏️ Update Product",
-                variant="primary"
+                variant="secondary"
             )
 
-            update_product_status = gr.Textbox(
-                label="Status",
-                interactive=False
-            )
-
-
-            # =================================================
-            # DELETE PRODUCT
-            # =================================================
-
-            gr.Markdown("## 🗑️ Delete Product")
-
-            delete_product_select = gr.Dropdown(
-                choices=get_product_names(),
-                label="Select Product",
-                value=None,
-                interactive=True
-            )
-
-            delete_product_button = gr.Button(
+            product_delete_option = gr.Button(
                 "🗑️ Delete Product",
                 variant="stop"
             )
 
-            delete_product_status = gr.Textbox(
-                label="Status",
-                interactive=False
-            )
+
+            # ------------------------------------------------
+            # ADD
+            # ------------------------------------------------
+
+            with gr.Column(visible=False) as product_add_section:
+
+                gr.Markdown("## ➕ Add Product")
+
+                with gr.Row():
+
+                    product_name_input = gr.Textbox(
+                        label="Product Name",
+                        placeholder="Enter product name"
+                    )
+
+                    product_price_input = gr.Number(
+                        label="Price",
+                        minimum=0
+                    )
+
+                add_product_button = gr.Button(
+                    "➕ Add Product",
+                    variant="primary"
+                )
+
+                add_product_status = gr.Textbox(
+                    label="Status",
+                    interactive=False
+                )
+
+
+            # ------------------------------------------------
+            # VIEW
+            # ------------------------------------------------
+
+            with gr.Column(visible=False) as product_view_section:
+
+                gr.Markdown("## 📋 View Products")
+
+                product_search_type = gr.Dropdown(
+                    choices=[
+                        "All Products",
+                        "Product ID",
+                        "Product Name"
+                    ],
+                    value="All Products",
+                    label="Search By"
+                )
+
+                product_search_value = gr.Textbox(
+                    label="Search Value",
+                    placeholder="Enter Product ID or Product Name"
+                )
+
+                search_product_button = gr.Button(
+                    "🔍 Search Product",
+                    variant="primary"
+                )
+
+                product_table = gr.Dataframe(
+                    headers=[
+                        "Product ID",
+                        "Product Name",
+                        "Price"
+                    ],
+                    value=show_products(),
+                    interactive=False
+                )
+
+                refresh_products_button = gr.Button(
+                    "🔄 Show All Products",
+                    variant="secondary"
+                )
+
+
+            # ------------------------------------------------
+            # UPDATE
+            # ------------------------------------------------
+
+            with gr.Column(visible=False) as product_update_section:
+
+                gr.Markdown("## ✏️ Update Product")
+
+                update_product_select = gr.Dropdown(
+                    choices=get_product_names(),
+                    label="Select Product",
+                    value=None
+                )
+
+                with gr.Row():
+
+                    update_product_name = gr.Textbox(
+                        label="New Product Name"
+                    )
+
+                    update_product_price = gr.Number(
+                        label="New Price",
+                        minimum=0
+                    )
+
+                update_product_button = gr.Button(
+                    "✏️ Update Product",
+                    variant="primary"
+                )
+
+                update_product_status = gr.Textbox(
+                    label="Status",
+                    interactive=False
+                )
+
+
+            # ------------------------------------------------
+            # DELETE
+            # ------------------------------------------------
+
+            with gr.Column(visible=False) as product_delete_section:
+
+                gr.Markdown("## 🗑️ Delete Product")
+
+                delete_product_select = gr.Dropdown(
+                    choices=get_product_names(),
+                    label="Select Product",
+                    value=None
+                )
+
+                delete_product_button = gr.Button(
+                    "🗑️ Delete Product",
+                    variant="stop"
+                )
+
+                delete_product_status = gr.Textbox(
+                    label="Status",
+                    interactive=False
+                )
 
 
         # ====================================================
         # INVENTORY PAGE
         # ====================================================
 
-        with gr.Column(
-            visible=False
-        ) as inventory_page:
+        with gr.Column(visible=False) as inventory_page:
+
+            with gr.Row():
+
+                back_inventory_button = gr.Button(
+                    "←",
+                    variant="secondary",
+                    scale=0,
+                    min_width=50
+                )
 
             gr.Markdown("# 📊 Manage Inventory")
 
@@ -744,133 +1095,177 @@ def create_admin_dashboard():
                 "Manage stock quantity for your products."
             )
 
-            back_inventory_button = gr.Button(
-                "← Back to Dashboard",
-                variant="secondary"
-            )
+            gr.Markdown("## Select Inventory Operation")
 
-
-            # =================================================
-            # ADD INVENTORY
-            # =================================================
-
-            gr.Markdown("## ➕ Add Inventory")
-
-            add_inventory_select = gr.Dropdown(
-                choices=get_products_not_in_inventory(),
-                label="Select Product",
-                value=None,
-                interactive=True
-            )
-
-            add_inventory_quantity = gr.Number(
-                label="Quantity",
-                minimum=0
-            )
-
-            add_inventory_button = gr.Button(
+            inventory_add_option = gr.Button(
                 "➕ Add Inventory",
                 variant="primary"
             )
 
-            add_inventory_status = gr.Textbox(
-                label="Status",
-                interactive=False
-            )
-
-
-            # =================================================
-            # CURRENT INVENTORY
-            # =================================================
-
-            gr.Markdown("## 📋 Current Inventory")
-
-            inventory_table = gr.Dataframe(
-                headers=[
-                    "Product ID",
-                    "Product Name",
-                    "Quantity"
-                ],
-                value=show_inventory(),
-                interactive=False
-            )
-
-            refresh_inventory_button = gr.Button(
-                "🔄 Refresh Inventory",
+            inventory_view_option = gr.Button(
+                "📋 View Inventory",
                 variant="secondary"
             )
 
-
-            # =================================================
-            # UPDATE INVENTORY
-            # =================================================
-
-            gr.Markdown("## ✏️ Update Inventory")
-
-            update_inventory_select = gr.Dropdown(
-                choices=get_inventory_product_names(),
-                label="Select Inventory Product",
-                value=None,
-                interactive=True
-            )
-
-            update_inventory_quantity = gr.Number(
-                label="New Quantity",
-                minimum=0
-            )
-
-            update_inventory_button = gr.Button(
+            inventory_update_option = gr.Button(
                 "✏️ Update Inventory",
-                variant="primary"
+                variant="secondary"
             )
 
-            update_inventory_status = gr.Textbox(
-                label="Status",
-                interactive=False
-            )
-
-
-            # =================================================
-            # DELETE INVENTORY
-            # =================================================
-
-            gr.Markdown("## 🗑️ Delete Inventory")
-
-            delete_inventory_select = gr.Dropdown(
-                choices=get_inventory_product_names(),
-                label="Select Inventory Product",
-                value=None,
-                interactive=True
-            )
-
-            delete_inventory_button = gr.Button(
+            inventory_delete_option = gr.Button(
                 "🗑️ Delete Inventory",
                 variant="stop"
             )
 
-            delete_inventory_status = gr.Textbox(
-                label="Status",
-                interactive=False
-            )
+
+            # ------------------------------------------------
+            # ADD
+            # ------------------------------------------------
+
+            with gr.Column(visible=False) as inventory_add_section:
+
+                gr.Markdown("## ➕ Add Inventory")
+
+                add_inventory_select = gr.Dropdown(
+                    choices=get_products_not_in_inventory(),
+                    label="Select Product",
+                    value=None
+                )
+
+                add_inventory_quantity = gr.Number(
+                    label="Quantity",
+                    minimum=0
+                )
+
+                add_inventory_button = gr.Button(
+                    "➕ Add Inventory",
+                    variant="primary"
+                )
+
+                add_inventory_status = gr.Textbox(
+                    label="Status",
+                    interactive=False
+                )
+
+
+            # ------------------------------------------------
+            # VIEW
+            # ------------------------------------------------
+
+            with gr.Column(visible=False) as inventory_view_section:
+
+                gr.Markdown("## 📋 View Inventory")
+
+                inventory_search_type = gr.Dropdown(
+                    choices=[
+                        "All Inventory",
+                        "Product ID",
+                        "Product Name"
+                    ],
+                    value="All Inventory",
+                    label="Search By"
+                )
+
+                inventory_search_value = gr.Textbox(
+                    label="Search Value",
+                    placeholder="Enter Product ID or Product Name"
+                )
+
+                search_inventory_button = gr.Button(
+                    "🔍 Search Inventory",
+                    variant="primary"
+                )
+
+                inventory_table = gr.Dataframe(
+                    headers=[
+                        "Product ID",
+                        "Product Name",
+                        "Quantity"
+                    ],
+                    value=show_inventory(),
+                    interactive=False
+                )
+
+                refresh_inventory_button = gr.Button(
+                    "🔄 Show All Inventory",
+                    variant="secondary"
+                )
+
+
+            # ------------------------------------------------
+            # UPDATE
+            # ------------------------------------------------
+
+            with gr.Column(visible=False) as inventory_update_section:
+
+                gr.Markdown("## ✏️ Update Inventory")
+
+                update_inventory_select = gr.Dropdown(
+                    choices=get_inventory_product_names(),
+                    label="Select Inventory Product",
+                    value=None
+                )
+
+                update_inventory_quantity = gr.Number(
+                    label="New Quantity",
+                    minimum=0
+                )
+
+                update_inventory_button = gr.Button(
+                    "✏️ Update Inventory",
+                    variant="primary"
+                )
+
+                update_inventory_status = gr.Textbox(
+                    label="Status",
+                    interactive=False
+                )
+
+
+            # ------------------------------------------------
+            # DELETE
+            # ------------------------------------------------
+
+            with gr.Column(visible=False) as inventory_delete_section:
+
+                gr.Markdown("## 🗑️ Delete Inventory")
+
+                delete_inventory_select = gr.Dropdown(
+                    choices=get_inventory_product_names(),
+                    label="Select Inventory Product",
+                    value=None
+                )
+
+                delete_inventory_button = gr.Button(
+                    "🗑️ Delete Inventory",
+                    variant="stop"
+                )
+
+                delete_inventory_status = gr.Textbox(
+                    label="Status",
+                    interactive=False
+                )
 
 
         # ====================================================
         # ORDERS PAGE
         # ====================================================
 
-        with gr.Column(
-            visible=False
-        ) as orders_page:
+        with gr.Column(visible=False) as orders_page:
+
+            with gr.Row():
+
+                back_orders_button = gr.Button(
+                    "←",
+                    variant="secondary",
+                    scale=0,
+                    min_width=50
+                )
 
             gr.Markdown("# 📋 View Orders")
 
             gr.Markdown(
                 "View all customer orders."
-            )
-
-            back_orders_button = gr.Button(
-                "← Back to Dashboard",
-                variant="secondary"
             )
 
             orders_table = gr.Dataframe(
@@ -892,6 +1287,286 @@ def create_admin_dashboard():
 
 
         # ====================================================
+        # ADMIN MANAGEMENT PAGE
+        # ====================================================
+
+        with gr.Column(
+            visible=False
+        ) as admin_management_page:
+
+            with gr.Row():
+
+                back_admin_management_button = gr.Button(
+                    "←",
+                    variant="secondary",
+                    scale=0,
+                    min_width=50
+                )
+
+            gr.Markdown("# 👨‍💼 Admin Management")
+
+            gr.Markdown(
+                "Add new administrators and view existing administrators."
+            )
+
+            gr.Markdown("## Select Admin Operation")
+
+            admin_add_option = gr.Button(
+                "➕ Add Admin",
+                variant="primary"
+            )
+
+            admin_view_option = gr.Button(
+                "📋 View Admins",
+                variant="secondary"
+            )
+
+
+            # ------------------------------------------------
+            # ADD ADMIN
+            # ------------------------------------------------
+
+            with gr.Column(
+                visible=False
+            ) as admin_add_section:
+
+                gr.Markdown("## ➕ Add Admin")
+
+                admin_full_name_input = gr.Textbox(
+                    label="Full Name",
+                    placeholder="Enter full name"
+                )
+
+                admin_username_input = gr.Textbox(
+                    label="Username",
+                    placeholder="Enter username"
+                )
+
+                admin_password_input = gr.Textbox(
+                    label="Password",
+                    type="password",
+                    placeholder="Enter password"
+                )
+
+                add_admin_button = gr.Button(
+                    "➕ Add Admin",
+                    variant="primary"
+                )
+
+                add_admin_status = gr.Textbox(
+                    label="Status",
+                    interactive=False
+                )
+
+
+            # ------------------------------------------------
+            # VIEW ADMINS
+            # ------------------------------------------------
+
+            with gr.Column(
+                visible=False
+            ) as admin_view_section:
+
+                gr.Markdown("## 📋 All Admins")
+
+                admin_table = gr.Dataframe(
+                    headers=[
+                        "Admin ID",
+                        "Username",
+                        "Full Name",
+                        "Status"
+                    ],
+                    value=show_admins(),
+                    interactive=False
+                )
+
+                refresh_admins_button = gr.Button(
+                    "🔄 Refresh Admins",
+                    variant="secondary"
+                )
+
+
+        # ====================================================
+        # ACTIVITY PAGE
+        # ====================================================
+
+        with gr.Column(
+            visible=False
+        ) as activity_page:
+
+            with gr.Row():
+
+                back_activity_button = gr.Button(
+                    "←",
+                    variant="secondary",
+                    scale=0,
+                    min_width=50
+                )
+
+            gr.Markdown("# 📝 Admin Activity Log")
+
+            gr.Markdown(
+                "Track admin login, logout and management activities."
+            )
+
+            activity_table = gr.Dataframe(
+                headers=[
+                    "Log ID",
+                    "Username",
+                    "Action",
+                    "Details",
+                    "Action Time"
+                ],
+                value=get_admin_activity(),
+                interactive=False
+            )
+
+            refresh_activity_button = gr.Button(
+                "🔄 Refresh Activity Log",
+                variant="secondary"
+            )
+
+
+        # ====================================================
+        # PRODUCT SECTION NAVIGATION
+        # ====================================================
+
+        def show_product_section(section):
+
+            return (
+                gr.update(visible=section == "add"),
+                gr.update(visible=section == "view"),
+                gr.update(visible=section == "update"),
+                gr.update(visible=section == "delete")
+            )
+
+
+        product_add_option.click(
+            lambda: show_product_section("add"),
+            outputs=[
+                product_add_section,
+                product_view_section,
+                product_update_section,
+                product_delete_section
+            ]
+        )
+
+        product_view_option.click(
+            lambda: show_product_section("view"),
+            outputs=[
+                product_add_section,
+                product_view_section,
+                product_update_section,
+                product_delete_section
+            ]
+        )
+
+        product_update_option.click(
+            lambda: show_product_section("update"),
+            outputs=[
+                product_add_section,
+                product_view_section,
+                product_update_section,
+                product_delete_section
+            ]
+        )
+
+        product_delete_option.click(
+            lambda: show_product_section("delete"),
+            outputs=[
+                product_add_section,
+                product_view_section,
+                product_update_section,
+                product_delete_section
+            ]
+        )
+
+
+        # ====================================================
+        # INVENTORY SECTION NAVIGATION
+        # ====================================================
+
+        def show_inventory_section(section):
+
+            return (
+                gr.update(visible=section == "add"),
+                gr.update(visible=section == "view"),
+                gr.update(visible=section == "update"),
+                gr.update(visible=section == "delete")
+            )
+
+
+        inventory_add_option.click(
+            lambda: show_inventory_section("add"),
+            outputs=[
+                inventory_add_section,
+                inventory_view_section,
+                inventory_update_section,
+                inventory_delete_section
+            ]
+        )
+
+        inventory_view_option.click(
+            lambda: show_inventory_section("view"),
+            outputs=[
+                inventory_add_section,
+                inventory_view_section,
+                inventory_update_section,
+                inventory_delete_section
+            ]
+        )
+
+        inventory_update_option.click(
+            lambda: show_inventory_section("update"),
+            outputs=[
+                inventory_add_section,
+                inventory_view_section,
+                inventory_update_section,
+                inventory_delete_section
+            ]
+        )
+
+        inventory_delete_option.click(
+            lambda: show_inventory_section("delete"),
+            outputs=[
+                inventory_add_section,
+                inventory_view_section,
+                inventory_update_section,
+                inventory_delete_section
+            ]
+        )
+
+
+        # ====================================================
+        # ADMIN SECTION NAVIGATION
+        # ====================================================
+
+        def show_admin_section(section):
+
+            return (
+                gr.update(visible=section == "add"),
+                gr.update(visible=section == "view")
+            )
+
+
+        admin_add_option.click(
+            lambda: show_admin_section("add"),
+            outputs=[
+                admin_add_section,
+                admin_view_section
+            ]
+        )
+
+        admin_view_option.click(
+            lambda: show_admin_section("view"),
+            outputs=[
+                admin_add_section,
+                admin_view_section
+            ]
+        )
+
+
+        # ====================================================
         # PRODUCT SELECTION
         # ====================================================
 
@@ -909,7 +1584,7 @@ def create_admin_dashboard():
 
 
         update_product_select.change(
-            fn=select_update_product,
+            select_update_product,
             inputs=update_product_select,
             outputs=[
                 update_product_name,
@@ -919,31 +1594,23 @@ def create_admin_dashboard():
 
 
         # ====================================================
-        # INVENTORY PRODUCT SELECTION
+        # INVENTORY SELECTION
         # ====================================================
 
         def select_inventory_product(product_name):
 
-            quantity = get_inventory_quantity(
-                product_name
-            )
-
-            if quantity is None:
-
-                return None
-
-            return quantity
+            return get_inventory_quantity(product_name)
 
 
         update_inventory_select.change(
-            fn=select_inventory_product,
+            select_inventory_product,
             inputs=update_inventory_select,
             outputs=update_inventory_quantity
         )
 
 
         # ====================================================
-        # NAVIGATION
+        # PAGE NAVIGATION
         # ====================================================
 
         def show_product_page():
@@ -951,6 +1618,8 @@ def create_admin_dashboard():
             return (
                 gr.update(visible=False),
                 gr.update(visible=True),
+                gr.update(visible=False),
+                gr.update(visible=False),
                 gr.update(visible=False),
                 gr.update(visible=False)
             )
@@ -962,6 +1631,8 @@ def create_admin_dashboard():
                 gr.update(visible=False),
                 gr.update(visible=False),
                 gr.update(visible=True),
+                gr.update(visible=False),
+                gr.update(visible=False),
                 gr.update(visible=False)
             )
 
@@ -969,6 +1640,32 @@ def create_admin_dashboard():
         def show_orders_page():
 
             return (
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=True),
+                gr.update(visible=False),
+                gr.update(visible=False)
+            )
+
+
+        def show_admin_management_page():
+
+            return (
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=True),
+                gr.update(visible=False)
+            )
+
+
+        def show_activity_page():
+
+            return (
+                gr.update(visible=False),
+                gr.update(visible=False),
                 gr.update(visible=False),
                 gr.update(visible=False),
                 gr.update(visible=False),
@@ -982,6 +1679,8 @@ def create_admin_dashboard():
                 gr.update(visible=True),
                 gr.update(visible=False),
                 gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=False),
                 gr.update(visible=False)
             )
 
@@ -990,36 +1689,39 @@ def create_admin_dashboard():
         # DASHBOARD BUTTONS
         # ====================================================
 
-        product_menu_button.click(
-            fn=show_product_page,
-            outputs=[
-                dashboard_menu,
-                product_page,
-                inventory_page,
-                orders_page
-            ]
-        )
+        page_outputs = [
+            dashboard_menu,
+            product_page,
+            inventory_page,
+            orders_page,
+            admin_management_page,
+            activity_page
+        ]
 
+
+        product_menu_button.click(
+            show_product_page,
+            outputs=page_outputs
+        )
 
         inventory_menu_button.click(
-            fn=show_inventory_page,
-            outputs=[
-                dashboard_menu,
-                product_page,
-                inventory_page,
-                orders_page
-            ]
+            show_inventory_page,
+            outputs=page_outputs
         )
 
-
         orders_menu_button.click(
-            fn=show_orders_page,
-            outputs=[
-                dashboard_menu,
-                product_page,
-                inventory_page,
-                orders_page
-            ]
+            show_orders_page,
+            outputs=page_outputs
+        )
+
+        admin_management_button.click(
+            show_admin_management_page,
+            outputs=page_outputs
+        )
+
+        activity_menu_button.click(
+            show_activity_page,
+            outputs=page_outputs
         )
 
 
@@ -1028,35 +1730,28 @@ def create_admin_dashboard():
         # ====================================================
 
         back_product_button.click(
-            fn=back_to_dashboard,
-            outputs=[
-                dashboard_menu,
-                product_page,
-                inventory_page,
-                orders_page
-            ]
+            back_to_dashboard,
+            outputs=page_outputs
         )
-
 
         back_inventory_button.click(
-            fn=back_to_dashboard,
-            outputs=[
-                dashboard_menu,
-                product_page,
-                inventory_page,
-                orders_page
-            ]
+            back_to_dashboard,
+            outputs=page_outputs
         )
 
-
         back_orders_button.click(
-            fn=back_to_dashboard,
-            outputs=[
-                dashboard_menu,
-                product_page,
-                inventory_page,
-                orders_page
-            ]
+            back_to_dashboard,
+            outputs=page_outputs
+        )
+
+        back_admin_management_button.click(
+            back_to_dashboard,
+            outputs=page_outputs
+        )
+
+        back_activity_button.click(
+            back_to_dashboard,
+            outputs=page_outputs
         )
 
 
@@ -1065,27 +1760,24 @@ def create_admin_dashboard():
         # ====================================================
 
         add_product_button.click(
-            fn=add_product_admin,
-
+            add_product_admin,
             inputs=[
+                admin_id_state,
                 product_name_input,
                 product_price_input
             ],
-
             outputs=[
                 add_product_status,
                 product_table
             ]
         ).then(
-            fn=refresh_product_dropdowns,
-
+            refresh_product_dropdowns,
             outputs=[
                 update_product_select,
                 delete_product_select
             ]
         ).then(
-            fn=refresh_inventory_dropdowns,
-
+            refresh_inventory_dropdowns,
             outputs=[
                 add_inventory_select,
                 update_inventory_select,
@@ -1095,25 +1787,22 @@ def create_admin_dashboard():
 
 
         # ====================================================
-        # REFRESH PRODUCTS
+        # SEARCH PRODUCT
         # ====================================================
 
-        refresh_products_button.click(
-            fn=show_products,
+        search_product_button.click(
+            search_product_admin,
+            inputs=[
+                product_search_type,
+                product_search_value
+            ],
             outputs=product_table
-        ).then(
-            fn=refresh_product_dropdowns,
-            outputs=[
-                update_product_select,
-                delete_product_select
-            ]
-        ).then(
-            fn=refresh_inventory_dropdowns,
-            outputs=[
-                add_inventory_select,
-                update_inventory_select,
-                delete_inventory_select
-            ]
+        )
+
+
+        refresh_products_button.click(
+            show_products,
+            outputs=product_table
         )
 
 
@@ -1122,26 +1811,25 @@ def create_admin_dashboard():
         # ====================================================
 
         update_product_button.click(
-            fn=update_product_admin,
-
+            update_product_admin,
             inputs=[
+                admin_id_state,
                 update_product_select,
                 update_product_name,
                 update_product_price
             ],
-
             outputs=[
                 update_product_status,
                 product_table
             ]
         ).then(
-            fn=refresh_product_dropdowns,
+            refresh_product_dropdowns,
             outputs=[
                 update_product_select,
                 delete_product_select
             ]
         ).then(
-            fn=refresh_inventory_dropdowns,
+            refresh_inventory_dropdowns,
             outputs=[
                 add_inventory_select,
                 update_inventory_select,
@@ -1155,24 +1843,23 @@ def create_admin_dashboard():
         # ====================================================
 
         delete_product_button.click(
-            fn=delete_product_admin,
-
+            delete_product_admin,
             inputs=[
+                admin_id_state,
                 delete_product_select
             ],
-
             outputs=[
                 delete_product_status,
                 product_table
             ]
         ).then(
-            fn=refresh_product_dropdowns,
+            refresh_product_dropdowns,
             outputs=[
                 update_product_select,
                 delete_product_select
             ]
         ).then(
-            fn=refresh_inventory_dropdowns,
+            refresh_inventory_dropdowns,
             outputs=[
                 add_inventory_select,
                 update_inventory_select,
@@ -1186,20 +1873,18 @@ def create_admin_dashboard():
         # ====================================================
 
         add_inventory_button.click(
-            fn=add_inventory_admin,
-
+            add_inventory_admin,
             inputs=[
+                admin_id_state,
                 add_inventory_select,
                 add_inventory_quantity
             ],
-
             outputs=[
                 add_inventory_status,
                 inventory_table
             ]
         ).then(
-            fn=refresh_inventory_dropdowns,
-
+            refresh_inventory_dropdowns,
             outputs=[
                 add_inventory_select,
                 update_inventory_select,
@@ -1209,19 +1894,22 @@ def create_admin_dashboard():
 
 
         # ====================================================
-        # REFRESH INVENTORY
+        # SEARCH INVENTORY
         # ====================================================
 
-        refresh_inventory_button.click(
-            fn=show_inventory,
+        search_inventory_button.click(
+            search_inventory_admin,
+            inputs=[
+                inventory_search_type,
+                inventory_search_value
+            ],
             outputs=inventory_table
-        ).then(
-            fn=refresh_inventory_dropdowns,
-            outputs=[
-                add_inventory_select,
-                update_inventory_select,
-                delete_inventory_select
-            ]
+        )
+
+
+        refresh_inventory_button.click(
+            show_inventory,
+            outputs=inventory_table
         )
 
 
@@ -1230,19 +1918,18 @@ def create_admin_dashboard():
         # ====================================================
 
         update_inventory_button.click(
-            fn=update_inventory_admin,
-
+            update_inventory_admin,
             inputs=[
+                admin_id_state,
                 update_inventory_select,
                 update_inventory_quantity
             ],
-
             outputs=[
                 update_inventory_status,
                 inventory_table
             ]
         ).then(
-            fn=refresh_inventory_dropdowns,
+            refresh_inventory_dropdowns,
             outputs=[
                 add_inventory_select,
                 update_inventory_select,
@@ -1256,18 +1943,17 @@ def create_admin_dashboard():
         # ====================================================
 
         delete_inventory_button.click(
-            fn=delete_inventory_admin,
-
+            delete_inventory_admin,
             inputs=[
+                admin_id_state,
                 delete_inventory_select
             ],
-
             outputs=[
                 delete_inventory_status,
                 inventory_table
             ]
         ).then(
-            fn=refresh_inventory_dropdowns,
+            refresh_inventory_dropdowns,
             outputs=[
                 add_inventory_select,
                 update_inventory_select,
@@ -1277,16 +1963,65 @@ def create_admin_dashboard():
 
 
         # ====================================================
-        # REFRESH ORDERS
+        # ADD ADMIN
+        # ====================================================
+
+        add_admin_button.click(
+            add_admin_admin,
+            inputs=[
+                admin_id_state,
+                admin_full_name_input,
+                admin_username_input,
+                admin_password_input
+            ],
+            outputs=[
+                add_admin_status,
+                admin_table
+            ]
+        )
+
+
+        # ====================================================
+        # VIEW ADMINS
+        # ====================================================
+
+        admin_view_option.click(
+            lambda: show_admins(),
+            outputs=admin_table
+        )
+
+        refresh_admins_button.click(
+            show_admins,
+            outputs=admin_table
+        )
+
+
+        # ====================================================
+        # ORDERS
         # ====================================================
 
         refresh_orders_button.click(
-            fn=show_orders,
+            view_orders_admin,
+            inputs=admin_id_state,
             outputs=orders_table
         )
 
 
-    return admin_dashboard
+        # ====================================================
+        # ACTIVITY
+        # ====================================================
+
+        refresh_activity_button.click(
+            get_admin_activity,
+            outputs=activity_table
+        )
+
+
+    return (
+        admin_dashboard,
+        logout_button,
+        admin_welcome
+    )
 
 
 # ============================================================
@@ -1297,10 +2032,6 @@ def create_app():
 
     css = """
 
-    /* ========================================================
-       MAIN BACKGROUND
-       ======================================================== */
-
     body {
         background-color: #0f172a !important;
     }
@@ -1310,11 +2041,6 @@ def create_app():
         color: white !important;
     }
 
-
-    /* ========================================================
-       CARDS
-       ======================================================== */
-
     .login-card,
     .dashboard-menu,
     .admin-page {
@@ -1323,7 +2049,6 @@ def create_app():
         margin-right: auto;
     }
 
-
     .login-card {
         margin-top: 60px;
         padding: 35px;
@@ -1331,17 +2056,11 @@ def create_app():
         background-color: #172033 !important;
     }
 
-
     .dashboard-menu {
         padding: 30px;
         border-radius: 18px;
         background-color: #172033 !important;
     }
-
-
-    /* ========================================================
-       TEXT
-       ======================================================== */
 
     h1,
     h2,
@@ -1353,11 +2072,6 @@ def create_app():
         color: white !important;
     }
 
-
-    /* ========================================================
-       PRIMARY BUTTON
-       ======================================================== */
-
     .gr-button-primary {
         background-color: #2563eb !important;
         border-color: #2563eb !important;
@@ -1367,11 +2081,6 @@ def create_app():
     .gr-button-primary:hover {
         background-color: #1d4ed8 !important;
     }
-
-
-    /* ========================================================
-       SECONDARY BUTTON
-       ======================================================== */
 
     .gr-button-secondary {
         background-color: #475569 !important;
@@ -1383,21 +2092,11 @@ def create_app():
         background-color: #64748b !important;
     }
 
-
-    /* ========================================================
-       DELETE BUTTON
-       ======================================================== */
-
     .gr-button-stop {
         background-color: #7f1d1d !important;
         border-color: #991b1b !important;
         color: white !important;
     }
-
-
-    /* ========================================================
-       INPUT BOXES
-       ======================================================== */
 
     input,
     textarea,
@@ -1410,23 +2109,16 @@ def create_app():
         border-radius: 8px !important;
     }
 
-
     input::placeholder,
     textarea::placeholder {
         color: #94a3b8 !important;
         opacity: 1 !important;
     }
 
-
     .input-container {
         background-color: #1e293b !important;
         border-color: #475569 !important;
     }
-
-
-    /* ========================================================
-       DROPDOWN
-       ======================================================== */
 
     .wrap {
         background-color: #1e293b !important;
@@ -1439,21 +2131,11 @@ def create_app():
         color: white !important;
     }
 
-
-    /* ========================================================
-       DATAFRAME
-       ======================================================== */
-
     .table-wrap,
     .dataframe {
         background-color: #1e293b !important;
         color: white !important;
     }
-
-
-    /* ========================================================
-       STATUS BOX
-       ======================================================== */
 
     textarea[disabled],
     input[disabled] {
@@ -1462,19 +2144,9 @@ def create_app():
         border-color: #475569 !important;
     }
 
-
-    /* ========================================================
-       ADMIN PAGE
-       ======================================================== */
-
     .admin-page {
         padding-bottom: 40px;
     }
-
-
-    /* ========================================================
-       NUMBER INPUT
-       ======================================================== */
 
     input[type="number"] {
         background-color: #1e293b !important;
@@ -1485,13 +2157,16 @@ def create_app():
 
 
     # ========================================================
-    # GRADIO APP
+    # GRADIO
     # ========================================================
 
     with gr.Blocks(
         title="Food Management System",
         css=css
     ) as app:
+
+        admin_id_state = gr.State(None)
+        admin_name_state = gr.State("")
 
 
         # ====================================================
@@ -1503,21 +2178,15 @@ def create_app():
             elem_classes="login-card"
         ) as login_page:
 
-            gr.Markdown(
-                "# 🍴 Food Management System"
-            )
+            gr.Markdown("# 🍴 Food Management System")
 
-            gr.Markdown(
-                "## Select Login Type"
-            )
-
+            gr.Markdown("## Select Login Type")
 
             admin_login_open_button = gr.Button(
                 "👨‍💼 Admin Login",
                 variant="primary",
                 size="lg"
             )
-
 
             customer_login_open_button = gr.Button(
                 "👤 Customer Login",
@@ -1535,16 +2204,12 @@ def create_app():
             elem_classes="login-card"
         ) as admin_login_page:
 
-            gr.Markdown(
-                "# 👨‍💼 Admin Login"
-            )
-
+            gr.Markdown("# 👨‍💼 Admin Login")
 
             admin_username = gr.Textbox(
                 label="Username",
                 placeholder="Enter username"
             )
-
 
             admin_password = gr.Textbox(
                 label="Password",
@@ -1552,13 +2217,11 @@ def create_app():
                 placeholder="Enter password"
             )
 
-
             admin_login_button = gr.Button(
                 "🔐 Login",
                 variant="primary",
                 size="lg"
             )
-
 
             admin_login_status = gr.Textbox(
                 label="Status",
@@ -1575,16 +2238,12 @@ def create_app():
             elem_classes="login-card"
         ) as customer_login_page:
 
-            gr.Markdown(
-                "# 👤 Customer Login"
-            )
-
+            gr.Markdown("# 👤 Customer Login")
 
             customer_username = gr.Textbox(
                 label="Username",
                 placeholder="Enter username"
             )
-
 
             customer_password = gr.Textbox(
                 label="Password",
@@ -1592,13 +2251,11 @@ def create_app():
                 placeholder="Enter password"
             )
 
-
             customer_login_button = gr.Button(
                 "🔐 Login",
                 variant="secondary",
                 size="lg"
             )
-
 
             customer_login_status = gr.Textbox(
                 label="Status",
@@ -1607,37 +2264,16 @@ def create_app():
 
 
         # ====================================================
-        # OLD LANDING DASHBOARD
+        # ADMIN DASHBOARD
         # ====================================================
 
-        with gr.Column(
-            visible=False,
-            elem_classes="login-card"
-        ) as dashboard_page:
-
-            gr.Markdown(
-                "# 🍴 Food Management System"
-            )
-
-            gr.Markdown(
-                "## Admin Dashboard"
-            )
-
-            gr.Markdown(
-                "Welcome, Administrator 👋"
-            )
-
-            admin_success_status = gr.Textbox(
-                label="Login Status",
-                interactive=False
-            )
-
-
-        # ====================================================
-        # CREATE ADMIN DASHBOARD
-        # ====================================================
-
-        admin_dashboard_component = create_admin_dashboard()
+        (
+            admin_dashboard_component,
+            logout_button,
+            admin_welcome
+        ) = create_admin_dashboard(
+            admin_id_state
+        )
 
 
         # ====================================================
@@ -1654,8 +2290,7 @@ def create_app():
 
 
         admin_login_open_button.click(
-            fn=open_admin_login,
-
+            open_admin_login,
             outputs=[
                 login_page,
                 admin_login_page,
@@ -1678,8 +2313,7 @@ def create_app():
 
 
         customer_login_open_button.click(
-            fn=open_customer_login,
-
+            open_customer_login,
             outputs=[
                 login_page,
                 admin_login_page,
@@ -1692,55 +2326,23 @@ def create_app():
         # ADMIN LOGIN
         # ====================================================
 
-        def process_admin_login(
-            username,
-            password
-        ):
-
-            success, message = check_admin_login(
-                username,
-                password
-            )
-
-            # -----------------------------------------------
-            # LOGIN SUCCESS
-            # -----------------------------------------------
-
-            if success:
-
-                return (
-                    message,
-                    gr.update(visible=False),
-                    gr.update(visible=False),
-                    gr.update(visible=True)
-                )
-
-            # -----------------------------------------------
-            # LOGIN FAILED
-            # -----------------------------------------------
-
-            return (
-                message,
-                gr.update(visible=True),
-                gr.update(visible=False),
-                gr.update(visible=False)
-            )
-
-
         admin_login_button.click(
-            fn=process_admin_login,
-
+            process_admin_login,
             inputs=[
                 admin_username,
                 admin_password
             ],
-
             outputs=[
                 admin_login_status,
                 admin_login_page,
-                dashboard_page,
-                admin_dashboard_component
+                admin_dashboard_component,
+                admin_id_state,
+                admin_name_state
             ]
+        ).then(
+            lambda name: f"Welcome, {name} 👋",
+            inputs=admin_name_state,
+            outputs=admin_welcome
         )
 
 
@@ -1762,14 +2364,54 @@ def create_app():
 
 
         customer_login_button.click(
-            fn=process_customer_login,
-
+            process_customer_login,
             inputs=[
                 customer_username,
                 customer_password
             ],
-
             outputs=customer_login_status
+        )
+
+
+        # ====================================================
+        # LOGOUT
+        # ====================================================
+
+        def logout_and_show_login(admin_id):
+
+            if admin_id is not None:
+
+                log_activity(
+                    admin_id,
+                    "LOGOUT",
+                    "Admin logged out"
+                )
+
+            return (
+                gr.update(visible=True),
+                gr.update(visible=False),
+                gr.update(visible=False),
+                None,
+                "",
+                "",
+                "",
+                "✅ Logged out successfully."
+            )
+
+
+        logout_button.click(
+            logout_and_show_login,
+            inputs=admin_id_state,
+            outputs=[
+                login_page,
+                admin_login_page,
+                admin_dashboard_component,
+                admin_id_state,
+                admin_name_state,
+                admin_username,
+                admin_password,
+                admin_login_status
+            ]
         )
 
 
@@ -1777,7 +2419,7 @@ def create_app():
 
 
 # ============================================================
-# RUN APPLICATION
+# RUN
 # ============================================================
 
 app = create_app()

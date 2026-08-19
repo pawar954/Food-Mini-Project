@@ -38,30 +38,34 @@ def create_tables():
     # Inventory
     # -------------------------
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS inventory (
-            product_id INTEGER PRIMARY KEY,
-            quantity INTEGER NOT NULL CHECK (quantity >= 0),
+    CREATE TABLE IF NOT EXISTS inventory (
+        product_id INTEGER PRIMARY KEY,
+        quantity INTEGER NOT NULL CHECK (quantity >= 0),
 
-            FOREIGN KEY (product_id)
-                REFERENCES products(product_id)
+        FOREIGN KEY (product_id)
+            REFERENCES products(product_id)
+            ON DELETE CASCADE
         )
-    """)
-
+        """)
+    
     # -------------------------
     # Orders
     # -------------------------
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS orders (
-            order_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            customer_id INTEGER NOT NULL,
-            order_date TEXT NOT NULL,
-            status TEXT NOT NULL,
-            total_amount REAL NOT NULL DEFAULT 0,
+    CREATE TABLE IF NOT EXISTS orders (
+        order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        customer_id INTEGER NOT NULL,
 
-            FOREIGN KEY (customer_id)
-                REFERENCES customers(customer_id)
-        )
-    """)
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+
+        status TEXT NOT NULL,
+        total_amount REAL NOT NULL DEFAULT 0,
+
+        FOREIGN KEY (customer_id)
+            REFERENCES customers(customer_id)
+    )
+""")
 
     # -------------------------
     # Order Items
@@ -98,15 +102,59 @@ def create_tables():
         )
     """)
 
+    
+
+
+
+# ============================================================
+# ADMIN USERS
+# ============================================================
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS admin_users (
+
+            admin_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            username TEXT NOT NULL UNIQUE,
+
+            password_hash TEXT NOT NULL,
+
+            full_name TEXT NOT NULL,
+
+            is_active INTEGER NOT NULL DEFAULT 1
+        )
+    """)
+
+    
+# ============================================================
+# ADMIN ACTIVITY LOGS
+# ============================================================
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS admin_activity_logs (
+
+            log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            admin_id INTEGER NOT NULL,
+
+            action TEXT NOT NULL,
+
+            details TEXT,
+
+            action_time TEXT NOT NULL,
+
+            FOREIGN KEY (admin_id)
+                REFERENCES admin_users(admin_id)
+        )
+    """)
     connection.commit()
     connection.close()
+    
+    
 
-    print("All tables created successfully.")
-
-
+    
 if __name__ == "__main__":
     create_tables()
 
 ####done###
-
 
