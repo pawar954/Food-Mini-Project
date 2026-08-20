@@ -105,7 +105,7 @@ def show_products():
         cursor.execute("""
             SELECT product_id, product_name, price
             FROM products
-            ORDER BY product_id
+            ORDER BY product_id ASC
         """)
 
         products = cursor.fetchall()

@@ -35,7 +35,7 @@ from create_inventory import (
 
 
 # ============================================================
-# INITIAL DATABASE SETUP
+# DATABASE SETUP
 # ============================================================
 
 create_tables()
@@ -135,6 +135,7 @@ def get_inventory_quantity(product_name):
     for item in inventory:
 
         if item[1] == product_name:
+
             return item[2]
 
     return None
@@ -149,20 +150,36 @@ def refresh_product_dropdowns():
     choices = get_product_names()
 
     return (
-        gr.update(choices=choices, value=None),
-        gr.update(choices=choices, value=None)
+        gr.update(
+            choices=choices,
+            value=None
+        ),
+        gr.update(
+            choices=choices,
+            value=None
+        )
     )
 
 
 def refresh_inventory_dropdowns():
 
     add_choices = get_products_not_in_inventory()
+
     inventory_choices = get_inventory_product_names()
 
     return (
-        gr.update(choices=add_choices, value=None),
-        gr.update(choices=inventory_choices, value=None),
-        gr.update(choices=inventory_choices, value=None)
+        gr.update(
+            choices=add_choices,
+            value=None
+        ),
+        gr.update(
+            choices=inventory_choices,
+            value=None
+        ),
+        gr.update(
+            choices=inventory_choices,
+            value=None
+        )
     )
 
 
@@ -170,7 +187,11 @@ def refresh_inventory_dropdowns():
 # PRODUCT - ADD
 # ============================================================
 
-def add_product_admin(admin_id, product_name, price):
+def add_product_admin(
+    admin_id,
+    product_name,
+    price
+):
 
     if not product_name or not product_name.strip():
 
@@ -307,7 +328,10 @@ def update_product_admin(
 # PRODUCT - DELETE
 # ============================================================
 
-def delete_product_admin(admin_id, selected_product):
+def delete_product_admin(
+    admin_id,
+    selected_product
+):
 
     if not selected_product:
 
@@ -355,7 +379,10 @@ def delete_product_admin(admin_id, selected_product):
 # PRODUCT SEARCH
 # ============================================================
 
-def search_product_admin(search_type, search_value):
+def search_product_admin(
+    search_type,
+    search_value
+):
 
     if search_type == "All Products":
 
@@ -585,7 +612,10 @@ def delete_inventory_admin(
 # INVENTORY SEARCH
 # ============================================================
 
-def search_inventory_admin(search_type, search_value):
+def search_inventory_admin(
+    search_type,
+    search_value
+):
 
     if search_type == "All Inventory":
 
@@ -617,7 +647,7 @@ def search_inventory_admin(search_type, search_value):
 
 
 # ============================================================
-# ORDERS
+# ORDERS - ALL ORDERS
 # ============================================================
 
 def show_orders():
@@ -631,19 +661,25 @@ def show_orders():
         cursor.execute("""
             SELECT
                 o.order_id,
+                o.customer_id,
                 c.name,
-                o.created_at,
+                c.phone,
+                DATE(o.created_at),
                 o.status,
                 o.total_amount
-            FROM orders o
-            JOIN customers c
+            FROM orders AS o
+            LEFT JOIN customers AS c
                 ON o.customer_id = c.customer_id
-            ORDER BY o.order_id DESC
+            ORDER BY o.order_id ASC
         """)
 
-        return cursor.fetchall()
+        rows = cursor.fetchall()
 
-    except sqlite3.Error:
+        return rows
+
+    except sqlite3.Error as error:
+
+        print("❌ ALL ORDERS ERROR:", error)
 
         return []
 
@@ -652,19 +688,239 @@ def show_orders():
         connection.close()
 
 
-def view_orders_admin(admin_id):
+# ============================================================
+# ORDER DETAILS - CUSTOMER SEARCH
+# ============================================================
 
-    orders = show_orders()
+def search_customer_orders(
+    search_type,
+    search_value
+):
+
+    if not search_value or not str(search_value).strip():
+
+        return (
+            [],
+            "❌ Please enter Customer ID or Customer Name."
+        )
+
+    connection = get_connection()
+
+    try:
+
+        cursor = connection.cursor()
+
+        if search_type == "Customer ID":
+
+            try:
+
+                customer_id = int(
+                    float(search_value)
+                )
+
+            except (ValueError, TypeError):
+
+                return (
+                    [],
+                    "❌ Customer ID must be a valid number."
+                )
+
+            cursor.execute("""
+                SELECT
+                    o.order_id,
+                    c.customer_id,
+                    c.name,
+                    c.phone,
+                    p.product_name,
+                    oi.quantity,
+                    p.price,
+                    (oi.quantity * p.price) AS item_total,
+                    o.status,
+                    DATE(o.created_at) AS order_date
+                FROM orders AS o
+                JOIN customers AS c
+                    ON o.customer_id = c.customer_id
+                JOIN order_items AS oi
+                    ON o.order_id = oi.order_id
+                JOIN products AS p
+                    ON oi.product_id = p.product_id
+                WHERE c.customer_id = ?
+                ORDER BY
+                    o.order_id ASC,
+                    oi.order_item_id ASC
+            """, (customer_id,))
+
+        elif search_type == "Customer Name":
+
+            customer_name = str(
+                search_value
+            ).strip()
+
+            cursor.execute("""
+                SELECT
+                    o.order_id,
+                    c.customer_id,
+                    c.name,
+                    c.phone,
+                    p.product_name,
+                    oi.quantity,
+                    p.price,
+                    (oi.quantity * p.price) AS item_total,
+                    o.status,
+                    DATE(o.created_at) AS order_date
+                FROM orders AS o
+                JOIN customers AS c
+                    ON o.customer_id = c.customer_id
+                JOIN order_items AS oi
+                    ON o.order_id = oi.order_id
+                JOIN products AS p
+                    ON oi.product_id = p.product_id
+                WHERE LOWER(c.name) = LOWER(?)
+                ORDER BY
+                    o.order_id ASC,
+                    oi.order_item_id ASC
+            """, (customer_name,))
+
+        else:
+
+            return (
+                [],
+                "❌ Please select Customer ID or Customer Name."
+            )
+
+        rows = cursor.fetchall()
+
+        if not rows:
+
+            return (
+                [],
+                "❌ No orders found for this customer."
+            )
+
+        first_row = rows[0]
+
+        order_id = first_row[0]
+        customer_id = first_row[1]
+        customer_name = first_row[2]
+        phone = first_row[3]
+        status = first_row[8]
+        order_date = first_row[9]
+
+        total_quantity = 0
+        total_amount = 0
+
+        products = []
+
+        for row in rows:
+
+            product_name = row[4]
+            quantity = row[5]
+            item_total = row[7]
+
+            total_quantity += quantity
+            total_amount += item_total
+
+            products.append(
+                f"{product_name} ({quantity})"
+            )
+
+        product_text = ", ".join(products)
+
+        # Duplicate heading removed from here.
+        # The heading is already present in the UI below.
+
+        summary = (
+            f"**Customer:** {customer_name}\n\n"
+            f"**Customer ID:** {customer_id}\n\n"
+            f"**Phone No:** {phone}\n\n"
+            f"**Order ID:** {order_id}\n\n"
+            f"**Products Ordered:** {product_text}\n\n"
+            f"**Total Quantity:** {total_quantity}\n\n"
+            f"**Total Amount:** ₹{total_amount:.2f}\n\n"
+            f"**Payment / Order Status:** {status}\n\n"
+            f"**Order Date:** {order_date}"
+        )
+
+        return (
+            rows,
+            summary
+        )
+
+    except sqlite3.Error as error:
+
+        print(
+            "❌ CUSTOMER ORDER SEARCH ERROR:",
+            error
+        )
+
+        return (
+            [],
+            f"❌ Database error: {error}"
+        )
+
+    finally:
+
+        connection.close()
+
+
+# ============================================================
+# ORDER SEARCH CONTROLLER
+# ============================================================
+
+def search_orders_admin(
+    admin_id,
+    search_type,
+    search_value
+):
+
+    if search_type == "All Orders":
+
+        orders = show_orders()
+
+        if admin_id is not None:
+
+            log_activity(
+                admin_id,
+                "VIEW_ORDERS",
+                "Admin viewed all customer orders"
+            )
+
+        return (
+            orders,
+            ""
+        )
+
+    details, summary = search_customer_orders(
+        search_type,
+        search_value
+    )
 
     if admin_id is not None:
 
+        if search_type == "Customer ID":
+
+            action_details = (
+                f"Admin searched orders by Customer ID: "
+                f"{search_value}"
+            )
+
+        else:
+
+            action_details = (
+                f"Admin searched orders by Customer Name: "
+                f"{search_value}"
+            )
+
         log_activity(
             admin_id,
-            "VIEW_ORDERS",
-            "Admin viewed customer orders"
+            "SEARCH_ORDERS",
+            action_details
         )
 
-    return orders
+    return (
+        details,
+        summary
+    )
 
 
 # ============================================================
@@ -675,7 +931,24 @@ def get_admin_activity():
 
     try:
 
-        return show_activity()
+        rows = show_activity()
+
+        # Newest activity first
+        if rows:
+
+            try:
+
+                rows = sorted(
+                    rows,
+                    key=lambda row: int(row[0]),
+                    reverse=True
+                )
+
+            except (ValueError, TypeError, IndexError):
+
+                pass
+
+        return rows
 
     except sqlite3.Error:
 
@@ -824,31 +1097,42 @@ def create_admin_dashboard(admin_id_state):
         # HEADER
         # ====================================================
 
-        with gr.Row():
+        with gr.Column(
+            elem_classes="top-header"
+        ):
 
-            with gr.Column(scale=8):
-
-                gr.Markdown(
-                    "# 🍴 Food Management System"
-                )
-
-                gr.Markdown(
-                    "## Admin Dashboard"
-                )
-
-                admin_welcome = gr.Markdown(
-                    "Welcome, Administrator 👋"
-                )
-
-            with gr.Column(
-                scale=1,
-                min_width=120
+            with gr.Row(
+                equal_height=True
             ):
 
-                logout_button = gr.Button(
-                    "🚪 Logout",
-                    variant="stop"
-                )
+                with gr.Column(
+                    scale=8,
+                    elem_classes="header-title"
+                ):
+
+                    gr.Markdown(
+                        "# 🍴 Food Management System"
+                    )
+
+                    gr.Markdown(
+                        "### Advanced Admin Control Center"
+                    )
+
+                    admin_welcome = gr.Markdown(
+                        "Welcome, Administrator 👋"
+                    )
+
+                # SMALL LOGOUT BUTTON
+                with gr.Column(
+                    scale=0,
+                    min_width=90
+                ):
+
+                    logout_button = gr.Button(
+                        "🚪 Logout",
+                        variant="stop",
+                        elem_classes="logout-btn"
+                    )
 
 
         # ====================================================
@@ -860,37 +1144,50 @@ def create_admin_dashboard(admin_id_state):
         ) as dashboard_menu:
 
             gr.Markdown(
-                "### Select what you want to manage"
+                "## ⚡ Admin Dashboard"
+            )
+
+            gr.Markdown(
+                "Manage your complete food management system from one place."
+            )
+
+            gr.Markdown(
+                "### 📌 Management Modules"
             )
 
             product_menu_button = gr.Button(
-                "📦 Manage Products",
+                "📦  Manage Products",
                 variant="primary",
-                size="lg"
+                size="lg",
+                elem_classes="menu-button"
             )
 
             inventory_menu_button = gr.Button(
-                "📊 Manage Inventory",
+                "📊  Manage Inventory",
                 variant="primary",
-                size="lg"
+                size="lg",
+                elem_classes="menu-button"
             )
 
             orders_menu_button = gr.Button(
-                "📋 View Orders",
+                "📋  View Customer Orders",
                 variant="secondary",
-                size="lg"
+                size="lg",
+                elem_classes="menu-button"
             )
 
             admin_management_button = gr.Button(
-                "👨‍💼 Admin Management",
+                "👨‍💼  Admin Management",
                 variant="secondary",
-                size="lg"
+                size="lg",
+                elem_classes="menu-button"
             )
 
             activity_menu_button = gr.Button(
-                "📝 Admin Activity Log",
+                "📝  Admin Activity Log",
                 variant="secondary",
-                size="lg"
+                size="lg",
+                elem_classes="menu-button"
             )
 
 
@@ -898,7 +1195,10 @@ def create_admin_dashboard(admin_id_state):
         # PRODUCT PAGE
         # ====================================================
 
-        with gr.Column(visible=False) as product_page:
+        with gr.Column(
+            visible=False,
+            elem_classes="content-page"
+        ) as product_page:
 
             with gr.Row():
 
@@ -906,45 +1206,63 @@ def create_admin_dashboard(admin_id_state):
                     "←",
                     variant="secondary",
                     scale=0,
-                    min_width=50
+                    min_width=45,
+                    elem_classes="back-btn"
                 )
 
-            gr.Markdown("# 📦 Manage Products")
+            gr.Markdown(
+                "# 📦 Manage Products"
+            )
 
             gr.Markdown(
-                "Add, view, update and delete products."
+                "Add, view, update and delete food products."
             )
 
-            gr.Markdown("## Select Product Operation")
+            with gr.Column(
+                elem_classes="operation-card"
+            ):
 
-            product_add_option = gr.Button(
-                "➕ Add Product",
-                variant="primary"
-            )
+                gr.Markdown(
+                    "### Select Product Operation"
+                )
 
-            product_view_option = gr.Button(
-                "📋 View Products",
-                variant="secondary"
-            )
+                product_add_option = gr.Button(
+                    "➕ Add Product",
+                    variant="primary",
+                    elem_classes="operation-button"
+                )
 
-            product_update_option = gr.Button(
-                "✏️ Update Product",
-                variant="secondary"
-            )
+                product_view_option = gr.Button(
+                    "📋 View Products",
+                    variant="secondary",
+                    elem_classes="operation-button"
+                )
 
-            product_delete_option = gr.Button(
-                "🗑️ Delete Product",
-                variant="stop"
-            )
+                product_update_option = gr.Button(
+                    "✏️ Update Product",
+                    variant="secondary",
+                    elem_classes="operation-button"
+                )
+
+                product_delete_option = gr.Button(
+                    "🗑️ Delete Product",
+                    variant="stop",
+                    elem_classes="operation-button"
+                )
 
 
             # ------------------------------------------------
-            # ADD
+            # ADD PRODUCT
             # ------------------------------------------------
 
-            with gr.Column(visible=False) as product_add_section:
+            with gr.Column(
+                visible=False,
+                elem_classes="section-card"
+            ) as product_add_section:
 
-                gr.Markdown("## ➕ Add Product")
+                gr.Markdown(
+                    "## ➕ Add Product"
+                )
 
                 with gr.Row():
 
@@ -954,7 +1272,7 @@ def create_admin_dashboard(admin_id_state):
                     )
 
                     product_price_input = gr.Number(
-                        label="Price",
+                        label="Price (₹)",
                         minimum=0
                     )
 
@@ -970,12 +1288,17 @@ def create_admin_dashboard(admin_id_state):
 
 
             # ------------------------------------------------
-            # VIEW
+            # VIEW PRODUCTS
             # ------------------------------------------------
 
-            with gr.Column(visible=False) as product_view_section:
+            with gr.Column(
+                visible=False,
+                elem_classes="section-card"
+            ) as product_view_section:
 
-                gr.Markdown("## 📋 View Products")
+                gr.Markdown(
+                    "## 📋 View Products"
+                )
 
                 product_search_type = gr.Dropdown(
                     choices=[
@@ -1004,7 +1327,8 @@ def create_admin_dashboard(admin_id_state):
                         "Price"
                     ],
                     value=show_products(),
-                    interactive=False
+                    interactive=False,
+                    elem_classes="data-table"
                 )
 
                 refresh_products_button = gr.Button(
@@ -1014,12 +1338,17 @@ def create_admin_dashboard(admin_id_state):
 
 
             # ------------------------------------------------
-            # UPDATE
+            # UPDATE PRODUCT
             # ------------------------------------------------
 
-            with gr.Column(visible=False) as product_update_section:
+            with gr.Column(
+                visible=False,
+                elem_classes="section-card"
+            ) as product_update_section:
 
-                gr.Markdown("## ✏️ Update Product")
+                gr.Markdown(
+                    "## ✏️ Update Product"
+                )
 
                 update_product_select = gr.Dropdown(
                     choices=get_product_names(),
@@ -1034,7 +1363,7 @@ def create_admin_dashboard(admin_id_state):
                     )
 
                     update_product_price = gr.Number(
-                        label="New Price",
+                        label="New Price (₹)",
                         minimum=0
                     )
 
@@ -1050,12 +1379,17 @@ def create_admin_dashboard(admin_id_state):
 
 
             # ------------------------------------------------
-            # DELETE
+            # DELETE PRODUCT
             # ------------------------------------------------
 
-            with gr.Column(visible=False) as product_delete_section:
+            with gr.Column(
+                visible=False,
+                elem_classes="section-card"
+            ) as product_delete_section:
 
-                gr.Markdown("## 🗑️ Delete Product")
+                gr.Markdown(
+                    "## 🗑️ Delete Product"
+                )
 
                 delete_product_select = gr.Dropdown(
                     choices=get_product_names(),
@@ -1078,7 +1412,10 @@ def create_admin_dashboard(admin_id_state):
         # INVENTORY PAGE
         # ====================================================
 
-        with gr.Column(visible=False) as inventory_page:
+        with gr.Column(
+            visible=False,
+            elem_classes="content-page"
+        ) as inventory_page:
 
             with gr.Row():
 
@@ -1086,45 +1423,63 @@ def create_admin_dashboard(admin_id_state):
                     "←",
                     variant="secondary",
                     scale=0,
-                    min_width=50
+                    min_width=45,
+                    elem_classes="back-btn"
                 )
 
-            gr.Markdown("# 📊 Manage Inventory")
+            gr.Markdown(
+                "# 📊 Manage Inventory"
+            )
 
             gr.Markdown(
-                "Manage stock quantity for your products."
+                "Manage stock quantity for your food products."
             )
 
-            gr.Markdown("## Select Inventory Operation")
+            with gr.Column(
+                elem_classes="operation-card"
+            ):
 
-            inventory_add_option = gr.Button(
-                "➕ Add Inventory",
-                variant="primary"
-            )
+                gr.Markdown(
+                    "### Select Inventory Operation"
+                )
 
-            inventory_view_option = gr.Button(
-                "📋 View Inventory",
-                variant="secondary"
-            )
+                inventory_add_option = gr.Button(
+                    "➕ Add Inventory",
+                    variant="primary",
+                    elem_classes="operation-button"
+                )
 
-            inventory_update_option = gr.Button(
-                "✏️ Update Inventory",
-                variant="secondary"
-            )
+                inventory_view_option = gr.Button(
+                    "📋 View Inventory",
+                    variant="secondary",
+                    elem_classes="operation-button"
+                )
 
-            inventory_delete_option = gr.Button(
-                "🗑️ Delete Inventory",
-                variant="stop"
-            )
+                inventory_update_option = gr.Button(
+                    "✏️ Update Inventory",
+                    variant="secondary",
+                    elem_classes="operation-button"
+                )
+
+                inventory_delete_option = gr.Button(
+                    "🗑️ Delete Inventory",
+                    variant="stop",
+                    elem_classes="operation-button"
+                )
 
 
             # ------------------------------------------------
-            # ADD
+            # ADD INVENTORY
             # ------------------------------------------------
 
-            with gr.Column(visible=False) as inventory_add_section:
+            with gr.Column(
+                visible=False,
+                elem_classes="section-card"
+            ) as inventory_add_section:
 
-                gr.Markdown("## ➕ Add Inventory")
+                gr.Markdown(
+                    "## ➕ Add Inventory"
+                )
 
                 add_inventory_select = gr.Dropdown(
                     choices=get_products_not_in_inventory(),
@@ -1149,12 +1504,17 @@ def create_admin_dashboard(admin_id_state):
 
 
             # ------------------------------------------------
-            # VIEW
+            # VIEW INVENTORY
             # ------------------------------------------------
 
-            with gr.Column(visible=False) as inventory_view_section:
+            with gr.Column(
+                visible=False,
+                elem_classes="section-card"
+            ) as inventory_view_section:
 
-                gr.Markdown("## 📋 View Inventory")
+                gr.Markdown(
+                    "## 📋 View Inventory"
+                )
 
                 inventory_search_type = gr.Dropdown(
                     choices=[
@@ -1183,7 +1543,8 @@ def create_admin_dashboard(admin_id_state):
                         "Quantity"
                     ],
                     value=show_inventory(),
-                    interactive=False
+                    interactive=False,
+                    elem_classes="data-table"
                 )
 
                 refresh_inventory_button = gr.Button(
@@ -1193,12 +1554,17 @@ def create_admin_dashboard(admin_id_state):
 
 
             # ------------------------------------------------
-            # UPDATE
+            # UPDATE INVENTORY
             # ------------------------------------------------
 
-            with gr.Column(visible=False) as inventory_update_section:
+            with gr.Column(
+                visible=False,
+                elem_classes="section-card"
+            ) as inventory_update_section:
 
-                gr.Markdown("## ✏️ Update Inventory")
+                gr.Markdown(
+                    "## ✏️ Update Inventory"
+                )
 
                 update_inventory_select = gr.Dropdown(
                     choices=get_inventory_product_names(),
@@ -1223,12 +1589,17 @@ def create_admin_dashboard(admin_id_state):
 
 
             # ------------------------------------------------
-            # DELETE
+            # DELETE INVENTORY
             # ------------------------------------------------
 
-            with gr.Column(visible=False) as inventory_delete_section:
+            with gr.Column(
+                visible=False,
+                elem_classes="section-card"
+            ) as inventory_delete_section:
 
-                gr.Markdown("## 🗑️ Delete Inventory")
+                gr.Markdown(
+                    "## 🗑️ Delete Inventory"
+                )
 
                 delete_inventory_select = gr.Dropdown(
                     choices=get_inventory_product_names(),
@@ -1251,7 +1622,10 @@ def create_admin_dashboard(admin_id_state):
         # ORDERS PAGE
         # ====================================================
 
-        with gr.Column(visible=False) as orders_page:
+        with gr.Column(
+            visible=False,
+            elem_classes="content-page"
+        ) as orders_page:
 
             with gr.Row():
 
@@ -1259,31 +1633,88 @@ def create_admin_dashboard(admin_id_state):
                     "←",
                     variant="secondary",
                     scale=0,
-                    min_width=50
+                    min_width=45,
+                    elem_classes="back-btn"
                 )
 
-            gr.Markdown("# 📋 View Orders")
+            gr.Markdown(
+                "# 📋 Customer Orders"
+            )
 
             gr.Markdown(
-                "View all customer orders."
+                "View all customer orders or search orders by customer."
             )
 
-            orders_table = gr.Dataframe(
-                headers=[
-                    "Order ID",
-                    "Customer Name",
-                    "Order Date",
-                    "Status",
-                    "Total Amount"
-                ],
-                value=show_orders(),
-                interactive=False
-            )
+            with gr.Column(
+                elem_classes="section-card"
+            ):
 
-            refresh_orders_button = gr.Button(
-                "🔄 Refresh Orders",
-                variant="secondary"
-            )
+                gr.Markdown(
+                    "### 🔍 Search Orders"
+                )
+
+                orders_search_type = gr.Dropdown(
+                    choices=[
+                        "All Orders",
+                        "Customer ID",
+                        "Customer Name"
+                    ],
+                    value="All Orders",
+                    label="Search By"
+                )
+
+                orders_search_value = gr.Textbox(
+                    label="Search Value",
+                    placeholder="Enter Customer ID or Customer Name"
+                )
+
+                search_orders_button = gr.Button(
+                    "🔍 Search Orders",
+                    variant="primary"
+                )
+
+
+            with gr.Column(
+                elem_classes="section-card"
+            ):
+
+                gr.Markdown(
+                    "### 📋 All Orders"
+                )
+
+                orders_table = gr.Dataframe(
+                    headers=[
+                        "Order ID",
+                        "Customer ID",
+                        "Customer Name",
+                        "Phone No",
+                        "Order Date",
+                        "Status",
+                        "Total Amount"
+                    ],
+                    value=show_orders(),
+                    interactive=False,
+                    elem_classes="data-table"
+                )
+
+                refresh_orders_button = gr.Button(
+                    "🔄 Show All Orders",
+                    variant="secondary"
+                )
+
+
+            with gr.Column(
+                elem_classes="summary-card"
+            ):
+
+                # ONLY ONE CUSTOMER ORDER DETAILS HEADING
+                gr.Markdown(
+                    "### 👤 Customer Order Details"
+                )
+
+                customer_order_summary = gr.Markdown(
+                    "Search a customer to view detailed order information."
+                )
 
 
         # ====================================================
@@ -1291,7 +1722,8 @@ def create_admin_dashboard(admin_id_state):
         # ====================================================
 
         with gr.Column(
-            visible=False
+            visible=False,
+            elem_classes="content-page"
         ) as admin_management_page:
 
             with gr.Row():
@@ -1300,26 +1732,37 @@ def create_admin_dashboard(admin_id_state):
                     "←",
                     variant="secondary",
                     scale=0,
-                    min_width=50
+                    min_width=45,
+                    elem_classes="back-btn"
                 )
 
-            gr.Markdown("# 👨‍💼 Admin Management")
+            gr.Markdown(
+                "# 👨‍💼 Admin Management"
+            )
 
             gr.Markdown(
-                "Add new administrators and view existing administrators."
+                "Manage administrators and view admin accounts."
             )
 
-            gr.Markdown("## Select Admin Operation")
+            with gr.Column(
+                elem_classes="operation-card"
+            ):
 
-            admin_add_option = gr.Button(
-                "➕ Add Admin",
-                variant="primary"
-            )
+                gr.Markdown(
+                    "### Select Admin Operation"
+                )
 
-            admin_view_option = gr.Button(
-                "📋 View Admins",
-                variant="secondary"
-            )
+                admin_add_option = gr.Button(
+                    "➕ Add Admin",
+                    variant="primary",
+                    elem_classes="operation-button"
+                )
+
+                admin_view_option = gr.Button(
+                    "📋 View Admins",
+                    variant="secondary",
+                    elem_classes="operation-button"
+                )
 
 
             # ------------------------------------------------
@@ -1327,10 +1770,13 @@ def create_admin_dashboard(admin_id_state):
             # ------------------------------------------------
 
             with gr.Column(
-                visible=False
+                visible=False,
+                elem_classes="section-card"
             ) as admin_add_section:
 
-                gr.Markdown("## ➕ Add Admin")
+                gr.Markdown(
+                    "## ➕ Add Admin"
+                )
 
                 admin_full_name_input = gr.Textbox(
                     label="Full Name",
@@ -1364,10 +1810,13 @@ def create_admin_dashboard(admin_id_state):
             # ------------------------------------------------
 
             with gr.Column(
-                visible=False
+                visible=False,
+                elem_classes="section-card"
             ) as admin_view_section:
 
-                gr.Markdown("## 📋 All Admins")
+                gr.Markdown(
+                    "## 📋 All Admins"
+                )
 
                 admin_table = gr.Dataframe(
                     headers=[
@@ -1377,7 +1826,8 @@ def create_admin_dashboard(admin_id_state):
                         "Status"
                     ],
                     value=show_admins(),
-                    interactive=False
+                    interactive=False,
+                    elem_classes="data-table"
                 )
 
                 refresh_admins_button = gr.Button(
@@ -1391,7 +1841,8 @@ def create_admin_dashboard(admin_id_state):
         # ====================================================
 
         with gr.Column(
-            visible=False
+            visible=False,
+            elem_classes="content-page"
         ) as activity_page:
 
             with gr.Row():
@@ -1400,31 +1851,43 @@ def create_admin_dashboard(admin_id_state):
                     "←",
                     variant="secondary",
                     scale=0,
-                    min_width=50
+                    min_width=45,
+                    elem_classes="back-btn"
                 )
 
-            gr.Markdown("# 📝 Admin Activity Log")
+            gr.Markdown(
+                "# 📝 Admin Activity Log"
+            )
 
             gr.Markdown(
                 "Track admin login, logout and management activities."
             )
 
-            activity_table = gr.Dataframe(
-                headers=[
-                    "Log ID",
-                    "Username",
-                    "Action",
-                    "Details",
-                    "Action Time"
-                ],
-                value=get_admin_activity(),
-                interactive=False
-            )
+            with gr.Column(
+                elem_classes="section-card"
+            ):
 
-            refresh_activity_button = gr.Button(
-                "🔄 Refresh Activity Log",
-                variant="secondary"
-            )
+                gr.Markdown(
+                    "### 🕐 Recent Activity"
+                )
+
+                activity_table = gr.Dataframe(
+                    headers=[
+                        "Log ID",
+                        "Username",
+                        "Action",
+                        "Details",
+                        "Action Time"
+                    ],
+                    value=get_admin_activity(),
+                    interactive=False,
+                    elem_classes="data-table"
+                )
+
+                refresh_activity_button = gr.Button(
+                    "🔄 Refresh Activity Log",
+                    variant="secondary"
+                )
 
 
         # ====================================================
@@ -1599,7 +2062,9 @@ def create_admin_dashboard(admin_id_state):
 
         def select_inventory_product(product_name):
 
-            return get_inventory_quantity(product_name)
+            return get_inventory_quantity(
+                product_name
+            )
 
 
         update_inventory_select.change(
@@ -1685,10 +2150,6 @@ def create_admin_dashboard(admin_id_state):
             )
 
 
-        # ====================================================
-        # DASHBOARD BUTTONS
-        # ====================================================
-
         page_outputs = [
             dashboard_menu,
             product_page,
@@ -1698,6 +2159,10 @@ def create_admin_dashboard(admin_id_state):
             activity_page
         ]
 
+
+        # ====================================================
+        # DASHBOARD BUTTONS
+        # ====================================================
 
         product_menu_button.click(
             show_product_page,
@@ -1990,6 +2455,7 @@ def create_admin_dashboard(admin_id_state):
             outputs=admin_table
         )
 
+
         refresh_admins_button.click(
             show_admins,
             outputs=admin_table
@@ -1997,18 +2463,48 @@ def create_admin_dashboard(admin_id_state):
 
 
         # ====================================================
-        # ORDERS
+        # ORDERS SEARCH
         # ====================================================
 
-        refresh_orders_button.click(
-            view_orders_admin,
-            inputs=admin_id_state,
-            outputs=orders_table
+        search_orders_button.click(
+            search_orders_admin,
+            inputs=[
+                admin_id_state,
+                orders_search_type,
+                orders_search_value
+            ],
+            outputs=[
+                orders_table,
+                customer_order_summary
+            ]
         )
 
 
         # ====================================================
-        # ACTIVITY
+        # SHOW ALL ORDERS
+        # ====================================================
+
+        def show_all_orders():
+
+            orders = show_orders()
+
+            return (
+                orders,
+                ""
+            )
+
+
+        refresh_orders_button.click(
+            show_all_orders,
+            outputs=[
+                orders_table,
+                customer_order_summary
+            ]
+        )
+
+
+        # ====================================================
+        # ACTIVITY REFRESH
         # ====================================================
 
         refresh_activity_button.click(
@@ -2032,132 +2528,534 @@ def create_app():
 
     css = """
 
+    /* ========================================================
+       GLOBAL
+       ======================================================== */
+
     body {
-        background-color: #0f172a !important;
+        background:
+            radial-gradient(
+                circle at top left,
+                #172554 0%,
+                #0f172a 35%,
+                #020617 100%
+            ) !important;
     }
 
     .gradio-container {
-        background-color: #0f172a !important;
+        background:
+            radial-gradient(
+                circle at top left,
+                #172554 0%,
+                #0f172a 35%,
+                #020617 100%
+            ) !important;
+
         color: white !important;
+        max-width: 1200px !important;
     }
 
-    .login-card,
-    .dashboard-menu,
-    .admin-page {
-        max-width: 850px;
-        margin-left: auto;
-        margin-right: auto;
-    }
+
+    /* ========================================================
+       LOGIN
+       ======================================================== */
 
     .login-card {
-        margin-top: 60px;
-        padding: 35px;
-        border-radius: 18px;
-        background-color: #172033 !important;
+        max-width: 620px !important;
+        margin: 90px auto !important;
+        padding: 45px !important;
+
+        background: rgba(15, 23, 42, 0.96) !important;
+
+        border: 1px solid #334155 !important;
+        border-radius: 24px !important;
+
+        box-shadow:
+            0 25px 70px rgba(0, 0, 0, 0.45) !important;
     }
+
+    .login-card h1 {
+        font-size: 34px !important;
+        font-weight: 800 !important;
+        text-align: center !important;
+    }
+
+    .login-card h2 {
+        text-align: center !important;
+        color: #cbd5e1 !important;
+    }
+
+
+    /* ========================================================
+       ADMIN PAGE
+       ======================================================== */
+
+    .admin-page {
+        max-width: 1100px !important;
+        margin: 25px auto !important;
+        padding-bottom: 60px !important;
+    }
+
+
+    /* ========================================================
+       HEADER
+       ======================================================== */
+
+    .top-header {
+        background:
+            linear-gradient(
+                135deg,
+                #172554,
+                #1e293b
+            ) !important;
+
+        border: 1px solid #334155 !important;
+        border-radius: 22px !important;
+
+        padding: 28px !important;
+
+        margin-bottom: 24px !important;
+
+        box-shadow:
+            0 15px 45px rgba(0, 0, 0, 0.30) !important;
+    }
+
+    .header-title h1 {
+        font-size: 32px !important;
+        font-weight: 800 !important;
+        margin-bottom: 5px !important;
+    }
+
+    .header-title h3 {
+        color: #94a3b8 !important;
+        margin-top: 0 !important;
+    }
+
+    .header-title p {
+        color: #60a5fa !important;
+        font-weight: 600 !important;
+    }
+
+
+    /* ========================================================
+       SMALL LOGOUT BUTTON
+       ======================================================== */
+
+    .logout-btn {
+        width: 90px !important;
+        min-width: 90px !important;
+        max-width: 90px !important;
+
+        height: 38px !important;
+        min-height: 38px !important;
+        max-height: 38px !important;
+
+        padding: 0 !important;
+
+        border-radius: 9px !important;
+
+        font-size: 13px !important;
+        font-weight: 700 !important;
+    }
+
+
+    /* ========================================================
+       DASHBOARD
+       ======================================================== */
 
     .dashboard-menu {
-        padding: 30px;
-        border-radius: 18px;
-        background-color: #172033 !important;
+        background:
+            rgba(15, 23, 42, 0.96) !important;
+
+        border: 1px solid #334155 !important;
+        border-radius: 22px !important;
+
+        padding: 32px !important;
+
+        box-shadow:
+            0 15px 45px rgba(0, 0, 0, 0.25) !important;
     }
 
-    h1,
-    h2,
-    h3,
-    h4,
-    p,
-    label,
-    span {
-        color: white !important;
+    .dashboard-menu h2 {
+        font-size: 28px !important;
+        font-weight: 800 !important;
     }
 
-    .gr-button-primary {
-        background-color: #2563eb !important;
-        border-color: #2563eb !important;
-        color: white !important;
+    .dashboard-menu h3 {
+        color: #94a3b8 !important;
+        margin-top: 25px !important;
     }
 
-    .gr-button-primary:hover {
-        background-color: #1d4ed8 !important;
+
+    /* ========================================================
+       MENU BUTTONS
+       ======================================================== */
+
+    .menu-button {
+        width: 100% !important;
+        min-height: 65px !important;
+
+        margin-top: 12px !important;
+
+        border-radius: 14px !important;
+
+        font-size: 17px !important;
+        font-weight: 700 !important;
+
+        transition:
+            transform 0.2s ease,
+            box-shadow 0.2s ease !important;
     }
 
-    .gr-button-secondary {
-        background-color: #475569 !important;
-        border-color: #64748b !important;
-        color: white !important;
+    .menu-button:hover {
+        transform: translateY(-2px) !important;
+
+        box-shadow:
+            0 10px 25px rgba(37, 99, 235, 0.20) !important;
     }
 
-    .gr-button-secondary:hover {
-        background-color: #64748b !important;
+
+    /* ========================================================
+       CONTENT PAGES
+       ======================================================== */
+
+    .content-page {
+        background:
+            rgba(15, 23, 42, 0.94) !important;
+
+        border: 1px solid #334155 !important;
+        border-radius: 22px !important;
+
+        padding: 30px !important;
+
+        box-shadow:
+            0 15px 45px rgba(0, 0, 0, 0.30) !important;
     }
 
-    .gr-button-stop {
-        background-color: #7f1d1d !important;
-        border-color: #991b1b !important;
-        color: white !important;
+    .content-page > h1 {
+        font-size: 30px !important;
+        font-weight: 800 !important;
+        margin-top: 10px !important;
     }
+
+    .content-page > p {
+        color: #94a3b8 !important;
+    }
+
+
+    /* ========================================================
+       BACK BUTTON
+       ======================================================== */
+
+    .back-btn {
+        width: 45px !important;
+        min-width: 45px !important;
+        max-width: 45px !important;
+
+        height: 40px !important;
+        min-height: 40px !important;
+
+        padding: 0 !important;
+
+        border-radius: 10px !important;
+
+        font-size: 24px !important;
+        font-weight: 700 !important;
+    }
+
+
+    /* ========================================================
+       OPERATION CARD
+       ======================================================== */
+
+    .operation-card {
+        background:
+            #111c30 !important;
+
+        border: 1px solid #334155 !important;
+
+        border-radius: 18px !important;
+
+        padding: 24px !important;
+
+        margin-top: 20px !important;
+        margin-bottom: 22px !important;
+    }
+
+    .operation-card h3 {
+        color: #e2e8f0 !important;
+        margin-bottom: 18px !important;
+    }
+
+
+    /* ========================================================
+       OPERATION BUTTONS
+       ======================================================== */
+
+    .operation-button {
+        width: 100% !important;
+
+        min-height: 55px !important;
+
+        margin-top: 10px !important;
+
+        border-radius: 12px !important;
+
+        font-size: 16px !important;
+
+        font-weight: 700 !important;
+    }
+
+
+    /* ========================================================
+       SECTION CARD
+       ======================================================== */
+
+    .section-card {
+        background:
+            #111c30 !important;
+
+        border: 1px solid #334155 !important;
+
+        border-radius: 18px !important;
+
+        padding: 26px !important;
+
+        margin-top: 18px !important;
+
+        box-shadow:
+            0 8px 25px rgba(0, 0, 0, 0.18) !important;
+    }
+
+    .section-card h2 {
+        font-size: 23px !important;
+        font-weight: 750 !important;
+        margin-bottom: 20px !important;
+    }
+
+
+    /* ========================================================
+       SUMMARY CARD
+       ======================================================== */
+
+    .summary-card {
+        background:
+            linear-gradient(
+                135deg,
+                #111c30,
+                #172554
+            ) !important;
+
+        border: 1px solid #334155 !important;
+
+        border-radius: 18px !important;
+
+        padding: 26px !important;
+
+        margin-top: 20px !important;
+    }
+
+    .summary-card h3 {
+        color: #60a5fa !important;
+    }
+
+
+    /* ========================================================
+       INPUTS
+       ======================================================== */
 
     input,
     textarea,
     .gr-input,
     .gr-text-input,
     .gr-number-input {
-        background-color: #1e293b !important;
+        background-color: #0f172a !important;
+
         color: white !important;
+
         border: 1px solid #475569 !important;
-        border-radius: 8px !important;
+
+        border-radius: 10px !important;
+    }
+
+    input:focus,
+    textarea:focus {
+        border-color: #3b82f6 !important;
+
+        box-shadow:
+            0 0 0 2px rgba(59, 130, 246, 0.15) !important;
     }
 
     input::placeholder,
     textarea::placeholder {
-        color: #94a3b8 !important;
+        color: #64748b !important;
         opacity: 1 !important;
     }
 
     .input-container {
-        background-color: #1e293b !important;
+        background-color: #0f172a !important;
+
         border-color: #475569 !important;
     }
 
     .wrap {
-        background-color: #1e293b !important;
+        background-color: #0f172a !important;
+
         color: white !important;
+
         border-color: #475569 !important;
     }
 
-    .wrap input {
-        background-color: #1e293b !important;
+
+    /* ========================================================
+       LABELS
+       ======================================================== */
+
+    label,
+    span {
+        color: #e2e8f0 !important;
+    }
+
+
+    /* ========================================================
+       MARKDOWN
+       ======================================================== */
+
+    h1,
+    h2,
+    h3,
+    h4,
+    p {
         color: white !important;
+    }
+
+    .section-card p,
+    .operation-card p {
+        color: #94a3b8 !important;
+    }
+
+
+    /* ========================================================
+       BUTTON COLORS
+       ======================================================== */
+
+    .gr-button-primary {
+        background:
+            linear-gradient(
+                135deg,
+                #2563eb,
+                #1d4ed8
+            ) !important;
+
+        border-color: #2563eb !important;
+
+        color: white !important;
+    }
+
+    .gr-button-primary:hover {
+        background:
+            linear-gradient(
+                135deg,
+                #3b82f6,
+                #2563eb
+            ) !important;
+    }
+
+    .gr-button-secondary {
+        background-color: #334155 !important;
+
+        border-color: #475569 !important;
+
+        color: white !important;
+    }
+
+    .gr-button-secondary:hover {
+        background-color: #475569 !important;
+    }
+
+    .gr-button-stop {
+        background-color: #7f1d1d !important;
+
+        border-color: #991b1b !important;
+
+        color: white !important;
+    }
+
+    .gr-button-stop:hover {
+        background-color: #991b1b !important;
+    }
+
+
+    /* ========================================================
+       DATA TABLE
+       ======================================================== */
+
+    .data-table {
+        margin-top: 18px !important;
+
+        border-radius: 12px !important;
+
+        overflow: hidden !important;
     }
 
     .table-wrap,
     .dataframe {
-        background-color: #1e293b !important;
+        background-color: #0f172a !important;
+
         color: white !important;
+
+        border-color: #334155 !important;
     }
+
+
+    /* ========================================================
+       DISABLED INPUTS
+       ======================================================== */
 
     textarea[disabled],
     input[disabled] {
-        background-color: #1e293b !important;
-        color: white !important;
-        border-color: #475569 !important;
+        background-color: #0f172a !important;
+
+        color: #e2e8f0 !important;
+
+        border-color: #334155 !important;
     }
 
-    .admin-page {
-        padding-bottom: 40px;
-    }
 
-    input[type="number"] {
-        background-color: #1e293b !important;
-        color: white !important;
+    /* ========================================================
+       RESPONSIVE
+       ======================================================== */
+
+    @media (max-width: 700px) {
+
+        .admin-page {
+            margin: 10px auto !important;
+            padding: 10px !important;
+        }
+
+        .login-card {
+            margin: 30px 10px !important;
+            padding: 25px !important;
+        }
+
+        .content-page {
+            padding: 18px !important;
+        }
+
+        .dashboard-menu {
+            padding: 20px !important;
+        }
+
+        .top-header {
+            padding: 20px !important;
+        }
     }
 
     """
 
 
     # ========================================================
-    # GRADIO
+    # GRADIO APP
     # ========================================================
 
     with gr.Blocks(
@@ -2165,7 +3063,12 @@ def create_app():
         css=css
     ) as app:
 
+        # ====================================================
+        # STATES
+        # ====================================================
+
         admin_id_state = gr.State(None)
+
         admin_name_state = gr.State("")
 
 
@@ -2178,20 +3081,30 @@ def create_app():
             elem_classes="login-card"
         ) as login_page:
 
-            gr.Markdown("# 🍴 Food Management System")
+            gr.Markdown(
+                "# 🍴 Food Management System"
+            )
 
-            gr.Markdown("## Select Login Type")
+            gr.Markdown(
+                "## Welcome Back 👋"
+            )
+
+            gr.Markdown(
+                "Select your login type to continue."
+            )
 
             admin_login_open_button = gr.Button(
-                "👨‍💼 Admin Login",
+                "👨‍💼  Admin Login",
                 variant="primary",
-                size="lg"
+                size="lg",
+                elem_classes="menu-button"
             )
 
             customer_login_open_button = gr.Button(
-                "👤 Customer Login",
+                "👤  Customer Login",
                 variant="secondary",
-                size="lg"
+                size="lg",
+                elem_classes="menu-button"
             )
 
 
@@ -2204,17 +3117,23 @@ def create_app():
             elem_classes="login-card"
         ) as admin_login_page:
 
-            gr.Markdown("# 👨‍💼 Admin Login")
+            gr.Markdown(
+                "# 👨‍💼 Admin Login"
+            )
+
+            gr.Markdown(
+                "Sign in to access the administrator dashboard."
+            )
 
             admin_username = gr.Textbox(
                 label="Username",
-                placeholder="Enter username"
+                placeholder="Enter admin username"
             )
 
             admin_password = gr.Textbox(
                 label="Password",
                 type="password",
-                placeholder="Enter password"
+                placeholder="Enter admin password"
             )
 
             admin_login_button = gr.Button(
@@ -2238,17 +3157,23 @@ def create_app():
             elem_classes="login-card"
         ) as customer_login_page:
 
-            gr.Markdown("# 👤 Customer Login")
+            gr.Markdown(
+                "# 👤 Customer Login"
+            )
+
+            gr.Markdown(
+                "Sign in to continue as a customer."
+            )
 
             customer_username = gr.Textbox(
                 label="Username",
-                placeholder="Enter username"
+                placeholder="Enter customer username"
             )
 
             customer_password = gr.Textbox(
                 label="Password",
                 type="password",
-                placeholder="Enter password"
+                placeholder="Enter customer password"
             )
 
             customer_login_button = gr.Button(
@@ -2419,7 +3344,7 @@ def create_app():
 
 
 # ============================================================
-# RUN
+# RUN APPLICATION
 # ============================================================
 
 app = create_app()

@@ -162,7 +162,7 @@ def show_inventory():
             FROM products p
             JOIN inventory i
                 ON p.product_id = i.product_id
-            ORDER BY p.product_id
+            ORDER BY p.product_id ASC
         """)
 
         inventory = cursor.fetchall()
