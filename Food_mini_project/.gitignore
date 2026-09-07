@@ -4,3 +4,6 @@ venv/
 .env
 food.db
 OOPS/
+/*
+!/Food_mini_project/
+!/Food_mini_project/**
